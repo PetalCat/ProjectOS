@@ -1,0 +1,101 @@
+use crate::models::project::{CreateProject, Project, UpdateProject};
+use crate::state::AppState;
+use tauri::State;
+use uuid::Uuid;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+#[tauri::command]
+pub fn create_project(state: State<AppState>, input: CreateProject) -> Result<Project, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let id = Uuid::new_v4().to_string();
+    let now = now_ms();
+    db.execute(
+        "INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
+        rusqlite::params![id, input.name, input.description, now, now],
+    ).map_err(|e| e.to_string())?;
+    Ok(Project { id, name: input.name, description: input.description, notes: None, created_at: now, updated_at: now })
+}
+
+#[tauri::command]
+pub fn list_projects(state: State<AppState>) -> Result<Vec<Project>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, description, notes, created_at, updated_at FROM projects ORDER BY name").map_err(|e| e.to_string())?;
+    let projects = stmt.query_map([], |row| {
+        Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? })
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+    Ok(projects)
+}
+
+#[tauri::command]
+pub fn update_project(state: State<AppState>, input: UpdateProject) -> Result<Project, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let now = now_ms();
+    let existing: Project = db.query_row(
+        "SELECT id, name, description, notes, created_at, updated_at FROM projects WHERE id = ?1",
+        [&input.id], |row| Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? }),
+    ).map_err(|e| e.to_string())?;
+    let name = input.name.unwrap_or(existing.name);
+    let description = input.description.or(existing.description);
+    let notes = input.notes.or(existing.notes);
+    db.execute("UPDATE projects SET name = ?1, description = ?2, notes = ?3, updated_at = ?4 WHERE id = ?5",
+        rusqlite::params![name, description, notes, now, input.id]).map_err(|e| e.to_string())?;
+    Ok(Project { id: input.id, name, description, notes, created_at: existing.created_at, updated_at: now })
+}
+
+#[tauri::command]
+pub fn delete_project(state: State<AppState>, id: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM projects WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db;
+    use crate::state::AppState;
+    use rusqlite::Connection;
+    use std::sync::Mutex;
+
+    fn test_state() -> AppState {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        db::schema::create_tables(&conn).unwrap();
+        AppState { db: Mutex::new(conn) }
+    }
+
+    #[test]
+    fn test_create_and_list_projects() {
+        let state = test_state();
+        let db = state.db.lock().unwrap();
+        db.execute("INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES ('p1', 'ProjectOS', 'Test', NULL, 1000, 1000)", []).unwrap();
+        let mut stmt = db.prepare("SELECT id, name FROM projects").unwrap();
+        let names: Vec<String> = stmt.query_map([], |row| row.get(1)).unwrap().filter_map(|r| r.ok()).collect();
+        assert_eq!(names, vec!["ProjectOS"]);
+    }
+
+    #[test]
+    fn test_update_project() {
+        let state = test_state();
+        let db = state.db.lock().unwrap();
+        db.execute("INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES ('p1', 'Old', NULL, NULL, 1000, 1000)", []).unwrap();
+        db.execute("UPDATE projects SET name = 'New', updated_at = 2000 WHERE id = 'p1'", []).unwrap();
+        let name: String = db.query_row("SELECT name FROM projects WHERE id = 'p1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "New");
+    }
+
+    #[test]
+    fn test_delete_project() {
+        let state = test_state();
+        let db = state.db.lock().unwrap();
+        db.execute("INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES ('p1', 'Test', NULL, NULL, 1000, 1000)", []).unwrap();
+        db.execute("DELETE FROM projects WHERE id = 'p1'", []).unwrap();
+        let count: i64 = db.query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+    }
+}
