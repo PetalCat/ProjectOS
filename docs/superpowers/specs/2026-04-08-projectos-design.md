@@ -218,43 +218,82 @@ Compound primary key.
 
 ---
 
+## Visual Design
+
+### Style Direction
+- **Font:** Inter (400–800 weights)
+- **Palette:** Warm dark base (#0a0a0a, #141410, #1a1a16) with earthy undertones — not cold grays
+- **Accents:** Each project gets a distinct color (amber #e8a040, teal #60b8e0, lime #b8e060, rose #e06080, etc.) used for dots, card top-edge gradients, labels
+- **Status colors:** Green/lime (#b8e060) for Next, amber (#e8a040) for Blocked, muted gray (#6a6a5a) for Ideas
+- **Typography:** Bold, confident — 800 weight for headings, 600–700 for labels
+- **Feel:** Warm, alive, opinionated — inspired by Beeper's energy but with its own identity. Not sterile, not soulless.
+- **Mockups:** See `.superpowers/brainstorm/` for HTML mockups
+
+### Assignees & Avatars
+- Assignees and commenters display with colored avatar dots (colored circles with initials in final)
+- Claude gets a distinct accent color (teal #60b8e0)
+
 ## UI Layout
 
 ### Hybrid: Sidebar + Dashboard Home + Project Drill-down
 
 **Sidebar (always visible):**
-- Project list (click to drill in)
-- Machine list (click to view machine details/docs)
+- Project list with colored dots and open issue counts
+- Machine list with active indicator (green diamond for current machine)
 - Home button at top
+- Keyboard shortcut hints at bottom (⌘K search, ⌘N capture)
+- Current user + machine name in header
 
 **Home view (default on launch):**
-- "What's Next" — card grid showing the `next` issue from each project, with project color accent, machine indicator
-- Activity feed — recent log entries ("Today", "Yesterday", etc.)
-- Answers "what should I do right now?" at a glance
+- "What's Next" header with date
+- 2-column card grid — one card per project showing the `next` issue
+- Each card: project name, issue title, machine indicator, milestone tag
+- Cards have colored top-edge gradient matching project color
+- Activity feed below, grouped by day ("Today", "Yesterday")
+- Activity entries show action icons (✓ done, + created, → moved), issue refs, relative time
 
 **Project view (click a project):**
-- Header: project name, open/closed count, "+ New Issue" button
-- Pinned issues (max 3, highlighted)
-- Ordered issue list with status badges, issue numbers, machine indicators, "blocked by" references
-- Milestone progress bar at bottom
-- Drag-to-reorder
+- Header: project colored dot, name (28px 800-weight), open/closed count, "+ New Issue" button
+- Milestone bar at top (always visible when milestone exists): title, detail, progress bar, percentage
+- Open/Closed tab toggle
+- Issues grouped by status in order:
+  1. **📌 Pinned** — persistent reference issues, highlighted border
+  2. **▶ Next** — the one current task, green filled circle indicator
+  3. **Ready** — actionable queue, open circle indicators
+  4. **⚠ Blocked** — dimmed rows, orange circle with !, "blocked by #N" in subtitle
+  5. **💡 Ideas** — muted styling, dashed circle indicator
+- Each group has a labeled divider with count
+- Issue rows: drag handle (appears on hover), state circle, title, subtitle (opened time, machine), labels, status badge, issue number
+- Drag-to-reorder within groups
 
 **Issue detail view (click an issue):**
-- Left side: issue body (markdown), "Where I left off" context field, comment thread with reactions, comment input
-- Right sidebar: status, assignees, labels, milestone (with progress bar), machine, blocking/related issues, actions (close, transfer, promote to project, delete)
-- GitHub-style layout
+- Back nav ("← ProjectName")
+- Header: Open/Closed badge (pill), status badge, title (26px 800-weight), #number · opened time · author
+- Body: markdown rendered in a bordered card, supports code blocks and cross-references
+- "Where I left off" context block: dashed border, editable, 📍 icon
+- Comment thread: left-bordered comments, author name (colored for claude), timestamp, reactions (emoji chips with counts)
+- Comment input at bottom
+- **Action buttons:** Close issue, Close with comment, Reopen, Edit title/body — prominent and clear
+- Right metadata sidebar (280px):
+  - Status (colored text)
+  - Assignees (colored dots + names, avatars in final)
+  - Labels (colored pills)
+  - Milestone (name + mini progress bar + percentage)
+  - Machine
+  - Blocks / Related issue links (clickable, colored)
+  - Actions: Close, Transfer, Promote to project, Lock, Delete (danger red)
 
 **Machine view (click a machine):**
-- Machine info: name, hostname, IP, user, OS, notes
-- Attached docs list
+- Machine info: name, hostname, IP, user, OS, notes (editable markdown)
+- Attached docs list with title, content/url
 - Issues tagged to this machine
 
-### Issue States Display
-- `next` — green badge, highlighted row
-- `ready` — no special styling
-- `blocked` — dimmed, orange "BLOCKED by #N" indicator
-- `idea` — subtle/italic styling
-- `done`/closed — strikethrough or collapsed section
+### Issue State Indicators (Circle System)
+- **Next:** Filled green circle with ▶ arrow
+- **Ready:** Open circle with gray border
+- **Blocked:** Open circle with orange border, ! inside
+- **Idea:** Dashed circle with muted border
+- **Closed:** Not shown in open list (separate tab)
 
 ---
 
