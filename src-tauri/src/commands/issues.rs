@@ -134,13 +134,13 @@ pub fn list_issues(
         Some(pid) => stmt
             .query_map([pid], row_to_issue)
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("row_to_issue failed: {}", e))?,
         None => stmt
             .query_map([], row_to_issue)
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect(),
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("row_to_issue failed: {}", e))?,
     };
 
     Ok(issues)
