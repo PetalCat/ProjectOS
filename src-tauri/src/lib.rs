@@ -1,6 +1,7 @@
 mod state;
 mod db;
 mod models;
+mod commands;
 
 use state::AppState;
 use std::sync::Mutex;
@@ -18,6 +19,12 @@ pub fn run() {
             app.manage(AppState { db: Mutex::new(conn) });
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            commands::projects::create_project,
+            commands::projects::list_projects,
+            commands::projects::update_project,
+            commands::projects::delete_project,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
