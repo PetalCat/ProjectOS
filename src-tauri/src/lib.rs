@@ -20,10 +20,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Projects
             commands::projects::create_project,
             commands::projects::list_projects,
             commands::projects::update_project,
             commands::projects::delete_project,
+            commands::projects::get_dashboard,
+            // Issues
             commands::issues::create_issue,
             commands::issues::list_issues,
             commands::issues::get_issue,
@@ -34,6 +37,47 @@ pub fn run() {
             commands::issues::reorder_issue,
             commands::issues::transfer_issue,
             commands::issues::promote_idea,
+            commands::issues::add_dependency,
+            commands::issues::remove_dependency,
+            commands::issues::add_relation,
+            commands::issues::remove_relation,
+            commands::issues::assign_issue,
+            commands::issues::unassign_issue,
+            commands::issues::get_issue_assignees,
+            // Comments + Reactions
+            commands::comments::create_comment,
+            commands::comments::list_comments,
+            commands::comments::update_comment,
+            commands::comments::delete_comment,
+            commands::comments::add_reaction,
+            commands::comments::remove_reaction,
+            commands::comments::list_reactions,
+            // Labels
+            commands::labels::create_label,
+            commands::labels::list_labels,
+            commands::labels::delete_label,
+            commands::labels::add_label_to_issue,
+            commands::labels::remove_label_from_issue,
+            commands::labels::get_issue_labels,
+            // Milestones
+            commands::milestones::create_milestone,
+            commands::milestones::list_milestones,
+            commands::milestones::close_milestone,
+            commands::milestones::set_milestone,
+            // Machines
+            commands::machines::create_machine,
+            commands::machines::list_machines,
+            commands::machines::update_machine,
+            commands::machines::delete_machine,
+            commands::machines::get_current_machine,
+            commands::machines::create_machine_doc,
+            commands::machines::list_machine_docs,
+            commands::machines::update_machine_doc,
+            commands::machines::delete_machine_doc,
+            // Activity
+            commands::activity::get_activity_log,
+            // Search
+            commands::search::search_issues,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
