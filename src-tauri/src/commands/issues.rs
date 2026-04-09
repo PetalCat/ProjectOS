@@ -50,16 +50,16 @@ pub fn row_to_issue(row: &rusqlite::Row) -> Result<Issue, rusqlite::Error> {
         milestone_id: row.get(10)?,
         locked: row.get::<_, i64>(11)? != 0,
         pinned: row.get::<_, i64>(12)? != 0,
-        external_source: row.get(13)?,
-        external_id: row.get(14)?,
-        external_url: row.get(15)?,
-        created_at: row.get(16)?,
-        updated_at: row.get(17)?,
-        closed_at: row.get(18)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        closed_at: row.get(15)?,
+        external_source: row.get(16)?,
+        external_id: row.get(17)?,
+        external_url: row.get(18)?,
     })
 }
 
-pub const ISSUE_COLUMNS: &str = "id, project_id, number, title, body, state, status, sort_order, context, machine_id, milestone_id, locked, pinned, external_source, external_id, external_url, created_at, updated_at, closed_at";
+pub const ISSUE_COLUMNS: &str = "id, project_id, number, title, body, state, status, sort_order, context, machine_id, milestone_id, locked, pinned, created_at, updated_at, closed_at, external_source, external_id, external_url";
 
 #[tauri::command]
 pub fn create_issue(app: tauri::AppHandle, state: State<AppState>, input: CreateIssue) -> Result<Issue, String> {

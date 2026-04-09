@@ -18,6 +18,8 @@
   let showClosed = $state(false);
   let creatingIssue = $state(false);
   let newIssueTitle = $state("");
+  let newIssueBody = $state("");
+  let newIssueStatus = $state("ready");
   let newIssueInputEl = $state<HTMLInputElement | null>(null);
 
   $effect(() => {
@@ -75,15 +77,29 @@
 
   async function handleCreateIssue() {
     if (!newIssueTitle.trim()) return;
-    await createIssue({ title: newIssueTitle.trim(), project_id: project.id, status: "ready" });
+    await createIssue({
+      title: newIssueTitle.trim(),
+      project_id: project.id,
+      body: newIssueBody.trim() || undefined,
+      status: newIssueStatus,
+    });
     newIssueTitle = "";
+    newIssueBody = "";
+    newIssueStatus = "ready";
     creatingIssue = false;
     await refresh();
   }
 
+  function cancelCreate() {
+    creatingIssue = false;
+    newIssueTitle = "";
+    newIssueBody = "";
+    newIssueStatus = "ready";
+  }
+
   function handleNewIssueKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") handleCreateIssue();
-    if (e.key === "Escape") { creatingIssue = false; newIssueTitle = ""; }
+    if (e.key === "Escape") cancelCreate();
+    if (e.key === "Enter" && e.metaKey) handleCreateIssue();
   }
 
   function toggleClosed() {
@@ -142,17 +158,49 @@
   {/if}
 
   {#if creatingIssue}
-    <div class="new-issue-bar">
+    <div class="new-issue-panel">
+      <div class="new-issue-header">
+        <h3>New Issue</h3>
+        <button class="cancel-x" onclick={cancelCreate}>×</button>
+      </div>
       <input
         bind:this={newIssueInputEl}
-        class="new-issue-input"
+        class="new-issue-title-input"
         type="text"
-        placeholder="Issue title…"
+        placeholder="Title"
         bind:value={newIssueTitle}
         onkeydown={handleNewIssueKeydown}
       />
-      <button class="confirm-btn" onclick={handleCreateIssue}>Create</button>
-      <button class="cancel-btn" onclick={() => { creatingIssue = false; newIssueTitle = ""; }}>Cancel</button>
+      <textarea
+        class="new-issue-body-input"
+        placeholder="Description (optional)"
+        bind:value={newIssueBody}
+        onkeydown={handleNewIssueKeydown}
+        rows="4"
+      ></textarea>
+      <div class="new-issue-footer">
+        <div class="status-picker">
+          <label class="status-option">
+            <input type="radio" name="status" value="ready" bind:group={newIssueStatus} />
+            <span class="status-dot ready"></span> Ready
+          </label>
+          <label class="status-option">
+            <input type="radio" name="status" value="idea" bind:group={newIssueStatus} />
+            <span class="status-dot idea"></span> Idea
+          </label>
+          <label class="status-option">
+            <input type="radio" name="status" value="next" bind:group={newIssueStatus} />
+            <span class="status-dot next"></span> Next
+          </label>
+        </div>
+        <div class="new-issue-actions">
+          <button class="cancel-btn" onclick={cancelCreate}>Cancel</button>
+          <button class="create-btn" onclick={handleCreateIssue} disabled={!newIssueTitle.trim()}>
+            Create Issue
+          </button>
+        </div>
+      </div>
+      <div class="new-issue-hint">⌘↵ to submit</div>
     </div>
   {/if}
 
@@ -294,41 +342,110 @@
     flex-shrink: 0;
   }
 
-  .new-issue-bar {
+  .new-issue-panel {
+    margin: 0 24px;
+    padding: 20px;
+    background: #141410;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    flex-shrink: 0;
+    margin-bottom: 8px;
+  }
+
+  .new-issue-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.02);
-    flex-shrink: 0;
+    justify-content: space-between;
+    margin-bottom: 14px;
   }
 
-  .new-issue-input {
-    flex: 1;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
-    padding: 7px 12px;
-    font-size: 13px;
-    color: #d8d8c8;
+  .new-issue-header h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #c8c8b0;
+  }
+
+  .cancel-x {
+    font-size: 20px;
+    color: #5a5a4a;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+  }
+  .cancel-x:hover { color: #8a8a7a; }
+
+  .new-issue-title-input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #e8e8d8;
     font-family: inherit;
     outline: none;
+    margin-bottom: 10px;
+  }
+  .new-issue-title-input:focus { border-color: rgba(255, 255, 255, 0.2); }
+  .new-issue-title-input::placeholder { color: #4a4a3a; }
+
+  .new-issue-body-input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #a8a898;
+    font-family: inherit;
+    outline: none;
+    resize: vertical;
+    min-height: 80px;
+    margin-bottom: 14px;
+  }
+  .new-issue-body-input:focus { border-color: rgba(255, 255, 255, 0.15); }
+  .new-issue-body-input::placeholder { color: #3a3a2a; }
+
+  .new-issue-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
 
-  .new-issue-input:focus {
-    border-color: rgba(255, 255, 255, 0.25);
+  .status-picker {
+    display: flex;
+    gap: 12px;
   }
 
-  .confirm-btn {
+  .status-option {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     font-size: 12px;
-    font-weight: 600;
-    color: #0a0a0a;
-    background: #b8e060;
-    border: none;
-    border-radius: 6px;
-    padding: 7px 14px;
+    color: #8a8a7a;
     cursor: pointer;
+  }
+  .status-option input[type="radio"] { display: none; }
+  .status-option:has(input:checked) { color: #d8d8c8; font-weight: 600; }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 2px solid #4a4a40;
+  }
+  .status-dot.ready { border-color: #6a6a5a; }
+  .status-dot.idea { border-style: dashed; border-color: #4a4a40; }
+  .status-dot.next { background: #b8e060; border-color: #b8e060; }
+  .status-option:has(input:checked) .status-dot.ready { border-color: #a0a090; }
+  .status-option:has(input:checked) .status-dot.idea { border-color: #6a6a5a; }
+
+  .new-issue-actions {
+    display: flex;
+    gap: 8px;
   }
 
   .cancel-btn {
@@ -337,9 +454,29 @@
     color: #6a6a5a;
     background: none;
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    padding: 7px 12px;
+    border-radius: 7px;
+    padding: 7px 14px;
     cursor: pointer;
+  }
+
+  .create-btn {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0a0a0a;
+    background: #b8e060;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 16px;
+    cursor: pointer;
+  }
+  .create-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .create-btn:hover:not(:disabled) { opacity: 0.9; }
+
+  .new-issue-hint {
+    text-align: right;
+    font-size: 10px;
+    color: #3a3a2a;
+    margin-top: 8px;
   }
 
   .loading {
