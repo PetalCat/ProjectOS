@@ -6,12 +6,14 @@ let currentProjectId = $state<string | null>(null);
 let showClosed = $state(false);
 let loading = $state(false);
 let error = $state<string | null>(null);
+let selectedIndex = $state<number>(-1);
 
 export async function loadIssues(projectId: string | null, includeClosed = false) {
   loading = true;
   error = null;
   currentProjectId = projectId;
   showClosed = includeClosed;
+  selectedIndex = -1;
   try {
     issues = await listIssues(projectId, includeClosed);
   } catch (e) {
@@ -23,6 +25,29 @@ export async function loadIssues(projectId: string | null, includeClosed = false
 
 export function getIssues() {
   return issues;
+}
+
+export function getSelectedIndex() {
+  return selectedIndex;
+}
+
+export function setSelectedIndex(idx: number) {
+  selectedIndex = idx;
+}
+
+export function moveSelection(delta: number) {
+  const len = issues.length;
+  if (len === 0) return;
+  if (selectedIndex < 0) {
+    selectedIndex = delta > 0 ? 0 : len - 1;
+  } else {
+    selectedIndex = Math.max(0, Math.min(len - 1, selectedIndex + delta));
+  }
+}
+
+export function getSelectedIssue(): Issue | null {
+  if (selectedIndex < 0 || selectedIndex >= issues.length) return null;
+  return issues[selectedIndex];
 }
 
 export function getCurrentProjectId() {

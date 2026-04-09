@@ -1,6 +1,6 @@
 use crate::models::project::{CreateProject, Project, UpdateProject};
 use crate::state::AppState;
-use tauri::State;
+use tauri::{Emitter, State};
 use uuid::Uuid;
 
 fn now_ms() -> i64 {
@@ -11,7 +11,7 @@ fn now_ms() -> i64 {
 }
 
 #[tauri::command]
-pub fn create_project(state: State<AppState>, input: CreateProject) -> Result<Project, String> {
+pub fn create_project(app: tauri::AppHandle, state: State<AppState>, input: CreateProject) -> Result<Project, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let id = Uuid::new_v4().to_string();
     let now = now_ms();
@@ -19,7 +19,9 @@ pub fn create_project(state: State<AppState>, input: CreateProject) -> Result<Pr
         "INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
         rusqlite::params![id, input.name, input.description, now, now],
     ).map_err(|e| e.to_string())?;
-    Ok(Project { id, name: input.name, description: input.description, notes: None, created_at: now, updated_at: now })
+    let project = Project { id, name: input.name, description: input.description, notes: None, created_at: now, updated_at: now };
+    app.emit("projects-changed", ()).unwrap();
+    Ok(project)
 }
 
 #[tauri::command]
@@ -33,7 +35,7 @@ pub fn list_projects(state: State<AppState>) -> Result<Vec<Project>, String> {
 }
 
 #[tauri::command]
-pub fn update_project(state: State<AppState>, input: UpdateProject) -> Result<Project, String> {
+pub fn update_project(app: tauri::AppHandle, state: State<AppState>, input: UpdateProject) -> Result<Project, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = now_ms();
     let existing: Project = db.query_row(
@@ -45,13 +47,15 @@ pub fn update_project(state: State<AppState>, input: UpdateProject) -> Result<Pr
     let notes = input.notes.or(existing.notes);
     db.execute("UPDATE projects SET name = ?1, description = ?2, notes = ?3, updated_at = ?4 WHERE id = ?5",
         rusqlite::params![name, description, notes, now, input.id]).map_err(|e| e.to_string())?;
+    app.emit("projects-changed", ()).unwrap();
     Ok(Project { id: input.id, name, description, notes, created_at: existing.created_at, updated_at: now })
 }
 
 #[tauri::command]
-pub fn delete_project(state: State<AppState>, id: String) -> Result<(), String> {
+pub fn delete_project(app: tauri::AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.execute("DELETE FROM projects WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    app.emit("projects-changed", ()).unwrap();
     Ok(())
 }
 

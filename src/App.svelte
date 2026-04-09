@@ -12,6 +12,9 @@
   import { currentView, navigate } from "$lib/stores/navigation.svelte";
   import { openSearch, isOpen as isSearchOpen } from "$lib/stores/search.svelte";
   import { onProjectsChanged, onIssuesChanged } from "$lib/events";
+  import { moveSelection, getSelectedIssue, getIssues } from "$lib/stores/issues.svelte";
+  import { closeIssue, reopenIssue } from "$lib/commands";
+  import { loadIssues } from "$lib/stores/issues.svelte";
 
   const view = $derived(currentView());
   const projects = $derived(getProjects());
@@ -54,15 +57,56 @@
     if (e.metaKey && e.key === "k") {
       e.preventDefault();
       openSearch();
+      return;
     }
     // Cmd+N → quick capture
     if (e.metaKey && e.key === "n") {
       e.preventDefault();
       captureOpen = true;
+      return;
     }
     // Escape → close overlays or go home
     if (e.key === "Escape") {
       if (captureOpen) { captureOpen = false; return; }
+    }
+
+    // Issue list navigation — only when in project view and no input focused
+    const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+    const isInput = tag === "input" || tag === "textarea" || (e.target as HTMLElement)?.isContentEditable;
+    if (isInput) return;
+
+    if (view.kind === "project") {
+      if (e.key === "j" || e.key === "J") {
+        e.preventDefault();
+        moveSelection(1);
+        return;
+      }
+      if (e.key === "k" || e.key === "K") {
+        e.preventDefault();
+        moveSelection(-1);
+        return;
+      }
+      if (e.key === "Enter") {
+        const issue = getSelectedIssue();
+        if (issue) {
+          e.preventDefault();
+          navigate({ kind: "issue", issueId: issue.id });
+        }
+        return;
+      }
+      if (e.key === "x" || e.key === "X") {
+        const issue = getSelectedIssue();
+        if (issue) {
+          e.preventDefault();
+          const pid = (view as { kind: "project"; projectId: string }).projectId;
+          if (issue.state === "open") {
+            closeIssue(issue.id).then(() => loadIssues(pid, false));
+          } else {
+            reopenIssue(issue.id).then(() => loadIssues(pid, false));
+          }
+        }
+        return;
+      }
     }
   }
 </script>
@@ -141,6 +185,24 @@
 
   :global(::-webkit-scrollbar-thumb:hover) {
     background: rgba(255, 255, 255, 0.14);
+  }
+
+  /* Focus ring for keyboard nav */
+  :global(:focus-visible) {
+    outline: 2px solid rgba(184, 224, 96, 0.5);
+    outline-offset: 2px;
+  }
+
+  /* Remove default focus for mouse users */
+  :global(:focus:not(:focus-visible)) {
+    outline: none;
+  }
+
+  /* Smooth transitions on interactive elements */
+  :global(button, a, [role="button"]) {
+    transition-property: background, color, border-color, opacity, box-shadow;
+    transition-duration: 0.12s;
+    transition-timing-function: ease;
   }
 
   .app {
