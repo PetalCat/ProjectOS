@@ -3,6 +3,7 @@
   import StatusBadge from "./StatusBadge.svelte";
   import LabelBadge from "./LabelBadge.svelte";
   import { navigate } from "$lib/stores/navigation.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   type Props = {
     issue: Issue;
@@ -110,6 +111,15 @@
     {#each labels as lbl (lbl.id)}
       <LabelBadge label={lbl} />
     {/each}
+    {#if issue.external_source === "github" && issue.external_url}
+      <button
+        class="github-badge"
+        title="Open on GitHub"
+        onclick={(e) => { e.stopPropagation(); openUrl(issue.external_url!); }}
+      >
+        GH
+      </button>
+    {/if}
     <StatusBadge status={issue.status} state={issue.state} />
     {#if issue.number}
       <span class="issue-num-badge">#{issue.number}</span>
@@ -251,5 +261,22 @@
     font-size: 11px;
     color: #4a4a3a;
     font-weight: 600;
+  }
+
+  .github-badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: #c0b89a;
+    background: #1a1a14;
+    border: 1px solid #3a3a28;
+    border-radius: 4px;
+    padding: 1px 5px;
+    cursor: pointer;
+    line-height: 1.4;
+    transition: opacity 0.1s;
+  }
+
+  .github-badge:hover {
+    opacity: 0.75;
   }
 </style>

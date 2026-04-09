@@ -19,7 +19,7 @@ pub fn create_project(app: tauri::AppHandle, state: State<AppState>, input: Crea
         "INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
         rusqlite::params![id, input.name, input.description, now, now],
     ).map_err(|e| e.to_string())?;
-    let project = Project { id, name: input.name, description: input.description, notes: None, created_at: now, updated_at: now };
+    let project = Project { id, name: input.name, description: input.description, notes: None, github_repo: None, created_at: now, updated_at: now };
     app.emit("projects-changed", ()).unwrap();
     Ok(project)
 }
@@ -27,9 +27,9 @@ pub fn create_project(app: tauri::AppHandle, state: State<AppState>, input: Crea
 #[tauri::command]
 pub fn list_projects(state: State<AppState>) -> Result<Vec<Project>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = db.prepare("SELECT id, name, description, notes, created_at, updated_at FROM projects ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, description, notes, github_repo, created_at, updated_at FROM projects ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
     let projects = stmt.query_map([], |row| {
-        Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? })
+        Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, github_repo: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)? })
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
     Ok(projects)
 }
@@ -39,16 +39,17 @@ pub fn update_project(app: tauri::AppHandle, state: State<AppState>, input: Upda
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = now_ms();
     let existing: Project = db.query_row(
-        "SELECT id, name, description, notes, created_at, updated_at FROM projects WHERE id = ?1",
-        [&input.id], |row| Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? }),
+        "SELECT id, name, description, notes, github_repo, created_at, updated_at FROM projects WHERE id = ?1",
+        [&input.id], |row| Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, github_repo: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)? }),
     ).map_err(|e| e.to_string())?;
     let name = input.name.unwrap_or(existing.name);
     let description = input.description.or(existing.description);
     let notes = input.notes.or(existing.notes);
+    let github_repo = existing.github_repo.clone();
     db.execute("UPDATE projects SET name = ?1, description = ?2, notes = ?3, updated_at = ?4 WHERE id = ?5",
         rusqlite::params![name, description, notes, now, input.id]).map_err(|e| e.to_string())?;
     app.emit("projects-changed", ()).unwrap();
-    Ok(Project { id: input.id, name, description, notes, created_at: existing.created_at, updated_at: now })
+    Ok(Project { id: input.id, name, description, notes, github_repo, created_at: existing.created_at, updated_at: now })
 }
 
 #[tauri::command]
@@ -76,9 +77,9 @@ pub struct Dashboard {
 pub fn get_dashboard(state: State<AppState>) -> Result<Dashboard, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let mut stmt = db.prepare("SELECT id, name, description, notes, created_at, updated_at FROM projects ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, description, notes, github_repo, created_at, updated_at FROM projects ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
     let projects: Vec<Project> = stmt.query_map([], |row| {
-        Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? })
+        Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, github_repo: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)? })
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
 
     let mut dashboard_projects = Vec::new();
@@ -144,9 +145,19 @@ pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path
             .map(|d| d.as_millis() as i64)
             .unwrap_or(now);
 
+        // Detect github_repo from .git/config
+        let github_repo: Option<String> = {
+            let git_config = std::path::Path::new(&dir_path).join(".git/config");
+            if git_config.exists() {
+                std::fs::read_to_string(&git_config).ok().and_then(|c| parse_github_repo(&c))
+            } else {
+                None
+            }
+        };
+
         db.execute(
-            "INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
-            rusqlite::params![id, name, dir_path, modified, modified],
+            "INSERT INTO projects (id, name, description, notes, github_repo, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)",
+            rusqlite::params![id, name, dir_path, github_repo, modified, modified],
         ).map_err(|e| e.to_string())?;
 
         db.execute(
@@ -159,6 +170,7 @@ pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path
             name,
             description: Some(dir_path),
             notes: None,
+            github_repo,
             created_at: modified,
             updated_at: modified,
         });
@@ -166,6 +178,54 @@ pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path
 
     let _ = app.emit("projects-changed", ());
     Ok(created)
+}
+
+fn parse_github_repo(git_config: &str) -> Option<String> {
+    for line in git_config.lines() {
+        let line = line.trim();
+        if line.starts_with("url = ") {
+            let url = &line[6..];
+            if let Some(rest) = url.strip_prefix("git@github.com:") {
+                return Some(rest.trim_end_matches(".git").to_string());
+            }
+            if let Some(rest) = url.strip_prefix("https://github.com/") {
+                return Some(rest.trim_end_matches(".git").to_string());
+            }
+        }
+    }
+    None
+}
+
+#[tauri::command]
+pub fn rescan_timestamps(app: tauri::AppHandle, state: State<AppState>) -> Result<u32, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, description FROM projects WHERE description IS NOT NULL").map_err(|e| e.to_string())?;
+    let projects: Vec<(String, String)> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    let mut updated = 0u32;
+    for (id, path) in &projects {
+        if let Ok(meta) = std::fs::metadata(path) {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(dur) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    let ms = dur.as_millis() as i64;
+                    db.execute("UPDATE projects SET updated_at = ?1 WHERE id = ?2", rusqlite::params![ms, id]).ok();
+                    updated += 1;
+                }
+            }
+        }
+        let git_config = std::path::Path::new(path).join(".git/config");
+        if git_config.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&git_config) {
+                if let Some(repo) = parse_github_repo(&contents) {
+                    db.execute("UPDATE projects SET github_repo = ?1 WHERE id = ?2", rusqlite::params![repo, id]).ok();
+                }
+            }
+        }
+    }
+
+    let _ = app.emit("projects-changed", ());
+    Ok(updated)
 }
 
 #[cfg(test)]

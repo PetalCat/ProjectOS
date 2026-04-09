@@ -6,3 +6,4 @@ pub mod milestones;
 pub mod machines;
 pub mod activity;
 pub mod search;
+pub mod github;

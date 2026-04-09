@@ -3,6 +3,7 @@ export interface Project {
   name: string;
   description: string | null;
   notes: string | null;
+  github_repo: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -21,6 +22,9 @@ export interface Issue {
   milestone_id: string | null;
   locked: boolean;
   pinned: boolean;
+  external_source: string | null;
+  external_id: string | null;
+  external_url: string | null;
   created_at: number;
   updated_at: number;
   closed_at: number | null;

@@ -242,3 +242,8 @@ export const getDashboard = () => invoke<Dashboard>("get_dashboard");
 
 export const scanDeveloperFolder = (path: string) =>
   invoke<Project[]>("scan_developer_folder", { path });
+
+export const rescanTimestamps = () => invoke<number>("rescan_timestamps");
+
+export const syncGithubIssues = (project_id: string) =>
+  invoke<number>("sync_github_issues", { project_id });

@@ -76,10 +76,13 @@ pub fn run() {
             commands::machines::delete_machine_doc,
             // Activity
             commands::activity::get_activity_log,
-            // Projects (scan)
+            // Projects (scan + rescan)
             commands::projects::scan_developer_folder,
+            commands::projects::rescan_timestamps,
             // Search
             commands::search::search_issues,
+            // GitHub
+            commands::github::sync_github_issues,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
