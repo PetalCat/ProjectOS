@@ -42,7 +42,7 @@ export const createIssue = (input: {
 export const listIssues = (
   project_id?: string | null,
   include_closed?: boolean
-) => invoke<Issue[]>("list_issues", { project_id, include_closed });
+) => invoke<Issue[]>("list_issues", { projectId: project_id, includeClosed: include_closed });
 
 export const getIssue = (id: string) => invoke<Issue>("get_issue", { id });
 
@@ -65,10 +65,10 @@ export const deleteIssue = (id: string) =>
   invoke<void>("delete_issue", { id });
 
 export const reorderIssue = (id: string, new_sort_order: number) =>
-  invoke<Issue>("reorder_issue", { id, new_sort_order });
+  invoke<Issue>("reorder_issue", { id, newSortOrder: new_sort_order });
 
 export const transferIssue = (id: string, to_project_id: string) =>
-  invoke<Issue>("transfer_issue", { id, to_project_id });
+  invoke<Issue>("transfer_issue", { id, toProjectId: to_project_id });
 
 export const promoteIdea = (id: string) =>
   invoke<Issue>("promote_idea", { id });
@@ -76,27 +76,27 @@ export const promoteIdea = (id: string) =>
 // ── Dependencies & Relations ──────────────────────────────────────────────────
 
 export const addDependency = (blocker_id: string, blocked_id: string) =>
-  invoke<void>("add_dependency", { blocker_id, blocked_id });
+  invoke<void>("add_dependency", { blockerId: blocker_id, blockedId: blocked_id });
 
 export const removeDependency = (blocker_id: string, blocked_id: string) =>
-  invoke<void>("remove_dependency", { blocker_id, blocked_id });
+  invoke<void>("remove_dependency", { blockerId: blocker_id, blockedId: blocked_id });
 
 export const addRelation = (issue_a_id: string, issue_b_id: string) =>
-  invoke<void>("add_relation", { issue_a_id, issue_b_id });
+  invoke<void>("add_relation", { issueAId: issue_a_id, issueBId: issue_b_id });
 
 export const removeRelation = (issue_a_id: string, issue_b_id: string) =>
-  invoke<void>("remove_relation", { issue_a_id, issue_b_id });
+  invoke<void>("remove_relation", { issueAId: issue_a_id, issueBId: issue_b_id });
 
 // ── Assignees ─────────────────────────────────────────────────────────────────
 
 export const assignIssue = (issue_id: string, assignee_name: string) =>
-  invoke<void>("assign_issue", { issue_id, assignee_name });
+  invoke<void>("assign_issue", { issueId: issue_id, assigneeName: assignee_name });
 
 export const unassignIssue = (issue_id: string, assignee_name: string) =>
-  invoke<void>("unassign_issue", { issue_id, assignee_name });
+  invoke<void>("unassign_issue", { issueId: issue_id, assigneeName: assignee_name });
 
 export const getIssueAssignees = (issue_id: string) =>
-  invoke<string[]>("get_issue_assignees", { issue_id });
+  invoke<string[]>("get_issue_assignees", { issueId: issue_id });
 
 // ── Comments ──────────────────────────────────────────────────────────────────
 
@@ -104,7 +104,7 @@ export const createComment = (issue_id: string, body: string) =>
   invoke<Comment>("create_comment", { input: { issue_id, body } });
 
 export const listComments = (issue_id: string) =>
-  invoke<Comment[]>("list_comments", { issue_id });
+  invoke<Comment[]>("list_comments", { issueId: issue_id });
 
 export const updateComment = (id: string, body: string) =>
   invoke<Comment>("update_comment", { input: { id, body } });
@@ -118,7 +118,7 @@ export const addReaction = (
   emoji: string,
   issue_id?: string | null,
   comment_id?: string | null
-) => invoke<void>("add_reaction", { issue_id, comment_id, emoji });
+) => invoke<void>("add_reaction", { issueId: issue_id, commentId: comment_id, emoji });
 
 export const removeReaction = (id: string) =>
   invoke<void>("remove_reaction", { id });
@@ -126,7 +126,7 @@ export const removeReaction = (id: string) =>
 export const listReactions = (
   issue_id?: string | null,
   comment_id?: string | null
-) => invoke<ReactionGroup[]>("list_reactions", { issue_id, comment_id });
+) => invoke<ReactionGroup[]>("list_reactions", { issueId: issue_id, commentId: comment_id });
 
 // ── Labels ────────────────────────────────────────────────────────────────────
 
@@ -137,19 +137,19 @@ export const createLabel = (
 ) => invoke<Label>("create_label", { input: { name, color, project_id } });
 
 export const listLabels = (project_id?: string | null) =>
-  invoke<Label[]>("list_labels", { project_id });
+  invoke<Label[]>("list_labels", { projectId: project_id });
 
 export const deleteLabel = (id: string) =>
   invoke<void>("delete_label", { id });
 
 export const addLabelToIssue = (issue_id: string, label_id: string) =>
-  invoke<void>("add_label_to_issue", { issue_id, label_id });
+  invoke<void>("add_label_to_issue", { issueId: issue_id, labelId: label_id });
 
 export const removeLabelFromIssue = (issue_id: string, label_id: string) =>
-  invoke<void>("remove_label_from_issue", { issue_id, label_id });
+  invoke<void>("remove_label_from_issue", { issueId: issue_id, labelId: label_id });
 
 export const getIssueLabels = (issue_id: string) =>
-  invoke<Label[]>("get_issue_labels", { issue_id });
+  invoke<Label[]>("get_issue_labels", { issueId: issue_id });
 
 // ── Milestones ────────────────────────────────────────────────────────────────
 
@@ -161,7 +161,7 @@ export const createMilestone = (input: {
 }) => invoke<Milestone>("create_milestone", { input });
 
 export const listMilestones = (project_id: string) =>
-  invoke<Milestone[]>("list_milestones", { project_id });
+  invoke<Milestone[]>("list_milestones", { projectId: project_id });
 
 export const closeMilestone = (id: string) =>
   invoke<void>("close_milestone", { id });
@@ -169,7 +169,7 @@ export const closeMilestone = (id: string) =>
 export const setMilestone = (
   issue_id: string,
   milestone_id: string | null
-) => invoke<void>("set_milestone", { issue_id, milestone_id });
+) => invoke<void>("set_milestone", { issueId: issue_id, milestoneId: milestone_id });
 
 // ── Machines ──────────────────────────────────────────────────────────────────
 
@@ -210,7 +210,7 @@ export const createMachineDoc = (input: {
 }) => invoke<MachineDoc>("create_machine_doc", { input });
 
 export const listMachineDocs = (machine_id: string) =>
-  invoke<MachineDoc[]>("list_machine_docs", { machine_id });
+  invoke<MachineDoc[]>("list_machine_docs", { machineId: machine_id });
 
 export const updateMachineDoc = (
   id: string,
@@ -227,7 +227,7 @@ export const deleteMachineDoc = (id: string) =>
 export const getActivityLog = (
   project_id?: string | null,
   limit?: number | null
-) => invoke<ActivityEntry[]>("get_activity_log", { project_id, limit });
+) => invoke<ActivityEntry[]>("get_activity_log", { projectId: project_id, limit });
 
 // ── Search ────────────────────────────────────────────────────────────────────
 
@@ -246,4 +246,4 @@ export const scanDeveloperFolder = (path: string) =>
 export const rescanTimestamps = () => invoke<number>("rescan_timestamps");
 
 export const syncGithubIssues = (project_id: string) =>
-  invoke<number>("sync_github_issues", { project_id });
+  invoke<number>("sync_github_issues", { projectId: project_id });
