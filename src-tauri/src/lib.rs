@@ -24,6 +24,16 @@ pub fn run() {
             commands::projects::list_projects,
             commands::projects::update_project,
             commands::projects::delete_project,
+            commands::issues::create_issue,
+            commands::issues::list_issues,
+            commands::issues::get_issue,
+            commands::issues::update_issue,
+            commands::issues::close_issue,
+            commands::issues::reopen_issue,
+            commands::issues::delete_issue,
+            commands::issues::reorder_issue,
+            commands::issues::transfer_issue,
+            commands::issues::promote_idea,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
