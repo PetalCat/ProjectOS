@@ -29,6 +29,7 @@ pub fn run() {
             // Issues
             commands::issues::create_issue,
             commands::issues::list_issues,
+            commands::issues::debug_issues,
             commands::issues::get_issue,
             commands::issues::update_issue,
             commands::issues::close_issue,
