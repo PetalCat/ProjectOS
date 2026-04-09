@@ -5,6 +5,7 @@
   import ProjectView from "$lib/components/ProjectView.svelte";
   import IssueDetail from "$lib/components/IssueDetail.svelte";
   import MachineView from "$lib/components/MachineView.svelte";
+  import Settings from "$lib/components/Settings.svelte";
   import SearchModal from "$lib/components/SearchModal.svelte";
   import QuickCapture from "$lib/components/QuickCapture.svelte";
   import { loadProjects, getProjects } from "$lib/stores/projects.svelte";
@@ -133,6 +134,10 @@
       {:else}
         <div class="not-found">Machine not found.</div>
       {/if}
+    {:else if view.kind === "settings"}
+      <div class="settings-container">
+        <Settings />
+      </div>
     {/if}
   </main>
 </div>
@@ -225,5 +230,11 @@
     padding: 48px 32px;
     color: #4a4a3a;
     font-size: 14px;
+  }
+
+  .settings-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 36px 48px;
   }
 </style>

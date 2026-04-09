@@ -76,6 +76,8 @@ pub fn run() {
             commands::machines::delete_machine_doc,
             // Activity
             commands::activity::get_activity_log,
+            // Projects (scan)
+            commands::projects::scan_developer_folder,
             // Search
             commands::search::search_issues,
         ])
