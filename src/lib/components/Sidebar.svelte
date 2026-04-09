@@ -70,6 +70,15 @@
     <button class="kbd-hint" onclick={onNewIssue}>
       <kbd>⌘N</kbd> Capture
     </button>
+    {#if view.kind === "project"}
+      <div class="kbd-divider"></div>
+      <div class="kbd-hint static">
+        <kbd>J</kbd><kbd>K</kbd> Navigate
+      </div>
+      <div class="kbd-hint static">
+        <kbd>↵</kbd> Open · <kbd>X</kbd> Toggle
+      </div>
+    {/if}
   </div>
 </aside>
 
@@ -218,6 +227,17 @@
   }
 
   .kbd-hint:hover { color: #5a5a4a; }
+
+  .kbd-hint.static {
+    pointer-events: none;
+    cursor: default;
+  }
+
+  .kbd-divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.04);
+    margin: 4px 0;
+  }
 
   kbd {
     font-size: 10px;

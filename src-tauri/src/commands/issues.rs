@@ -1,6 +1,6 @@
 use crate::models::issue::{CreateIssue, Issue, UpdateIssue};
 use crate::state::AppState;
-use tauri::State;
+use tauri::{Emitter, State};
 use uuid::Uuid;
 
 fn now_ms() -> i64 {
@@ -59,7 +59,7 @@ pub fn row_to_issue(row: &rusqlite::Row) -> Result<Issue, rusqlite::Error> {
 pub const ISSUE_COLUMNS: &str = "id, project_id, number, title, body, state, status, sort_order, context, machine_id, milestone_id, locked, pinned, created_at, updated_at, closed_at";
 
 #[tauri::command]
-pub fn create_issue(state: State<AppState>, input: CreateIssue) -> Result<Issue, String> {
+pub fn create_issue(app: tauri::AppHandle, state: State<AppState>, input: CreateIssue) -> Result<Issue, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let id = Uuid::new_v4().to_string();
     let now = now_ms();
@@ -93,6 +93,7 @@ pub fn create_issue(state: State<AppState>, input: CreateIssue) -> Result<Issue,
         row_to_issue,
     ).map_err(|e| e.to_string())?;
 
+    app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
     Ok(issue)
 }
 
@@ -154,7 +155,7 @@ pub fn get_issue(state: State<AppState>, id: String) -> Result<Issue, String> {
 }
 
 #[tauri::command]
-pub fn update_issue(state: State<AppState>, input: UpdateIssue) -> Result<Issue, String> {
+pub fn update_issue(app: tauri::AppHandle, state: State<AppState>, input: UpdateIssue) -> Result<Issue, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = now_ms();
 
@@ -192,11 +193,12 @@ pub fn update_issue(state: State<AppState>, input: UpdateIssue) -> Result<Issue,
         row_to_issue,
     ).map_err(|e| e.to_string())?;
 
+    app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
     Ok(issue)
 }
 
 #[tauri::command]
-pub fn close_issue(state: State<AppState>, id: String) -> Result<Issue, String> {
+pub fn close_issue(app: tauri::AppHandle, state: State<AppState>, id: String) -> Result<Issue, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = now_ms();
 
@@ -244,11 +246,12 @@ pub fn close_issue(state: State<AppState>, id: String) -> Result<Issue, String> 
         row_to_issue,
     ).map_err(|e| e.to_string())?;
 
+    app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
     Ok(issue)
 }
 
 #[tauri::command]
-pub fn reopen_issue(state: State<AppState>, id: String) -> Result<Issue, String> {
+pub fn reopen_issue(app: tauri::AppHandle, state: State<AppState>, id: String) -> Result<Issue, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = now_ms();
 
@@ -269,18 +272,25 @@ pub fn reopen_issue(state: State<AppState>, id: String) -> Result<Issue, String>
         row_to_issue,
     ).map_err(|e| e.to_string())?;
 
+    app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
     Ok(issue)
 }
 
 #[tauri::command]
-pub fn delete_issue(state: State<AppState>, id: String) -> Result<(), String> {
+pub fn delete_issue(app: tauri::AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Get project_id before deleting
+    let project_id: Option<String> = db.query_row(
+        "SELECT project_id FROM issues WHERE id = ?1",
+        [&id], |r| r.get(0)
+    ).ok().flatten();
     db.execute("DELETE FROM issues WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    app.emit("issues-changed", serde_json::json!({"project_id": project_id})).unwrap();
     Ok(())
 }
 
 #[tauri::command]
-pub fn reorder_issue(state: State<AppState>, id: String, new_sort_order: f64) -> Result<Issue, String> {
+pub fn reorder_issue(app: tauri::AppHandle, state: State<AppState>, id: String, new_sort_order: f64) -> Result<Issue, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = now_ms();
 
@@ -295,11 +305,12 @@ pub fn reorder_issue(state: State<AppState>, id: String, new_sort_order: f64) ->
         row_to_issue,
     ).map_err(|e| e.to_string())?;
 
+    app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
     Ok(issue)
 }
 
 #[tauri::command]
-pub fn transfer_issue(state: State<AppState>, id: String, to_project_id: String) -> Result<Issue, String> {
+pub fn transfer_issue(app: tauri::AppHandle, state: State<AppState>, id: String, to_project_id: String) -> Result<Issue, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = now_ms();
 
@@ -335,11 +346,14 @@ pub fn transfer_issue(state: State<AppState>, id: String, to_project_id: String)
         row_to_issue,
     ).map_err(|e| e.to_string())?;
 
+    // Emit for both source and destination projects
+    app.emit("issues-changed", serde_json::json!({"project_id": from_project_id})).unwrap();
+    app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
     Ok(issue)
 }
 
 #[tauri::command]
-pub fn promote_idea(state: State<AppState>, id: String) -> Result<Issue, String> {
+pub fn promote_idea(app: tauri::AppHandle, state: State<AppState>, id: String) -> Result<Issue, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let now = now_ms();
 
@@ -375,6 +389,8 @@ pub fn promote_idea(state: State<AppState>, id: String) -> Result<Issue, String>
         row_to_issue,
     ).map_err(|e| e.to_string())?;
 
+    app.emit("issues-changed", serde_json::json!({"project_id": closed_issue.project_id})).unwrap();
+    app.emit("projects-changed", ()).unwrap();
     Ok(closed_issue)
 }
 

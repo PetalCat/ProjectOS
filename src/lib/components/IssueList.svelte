@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Issue, Label } from "$lib/types";
   import IssueRow from "./IssueRow.svelte";
+  import { getSelectedIndex, setSelectedIndex } from "$lib/stores/issues.svelte";
+  import { reorderIssue } from "$lib/commands";
 
   type Props = {
     issues: Issue[];
@@ -10,6 +12,22 @@
   };
 
   let { issues, labelMap = {}, accent = "#6a6a5a", showClosed = false }: Props = $props();
+
+  // Flat ordered list for keyboard nav index mapping
+  const flatIssues = $derived.by(() => {
+    const open = issues.filter((i) => i.state === "open");
+    const closed = issues.filter((i) => i.state === "closed");
+
+    if (showClosed) return closed;
+
+    return [
+      ...open.filter((i) => i.pinned),
+      ...open.filter((i) => !i.pinned && i.status === "next"),
+      ...open.filter((i) => !i.pinned && (i.status === "ready" || i.status === null)),
+      ...open.filter((i) => !i.pinned && i.status === "blocked"),
+      ...open.filter((i) => !i.pinned && i.status === "idea"),
+    ];
+  });
 
   // Group issues by status
   const groups = $derived.by(() => {
@@ -28,6 +46,67 @@
       { key: "ideas", label: "Ideas", icon: "💡", issues: open.filter((i) => !i.pinned && i.status === "idea") },
     ].filter((g) => g.issues.length > 0);
   });
+
+  const selectedIndex = $derived(getSelectedIndex());
+
+  // Drag state
+  let draggedId = $state<string | null>(null);
+  let dragOverId = $state<string | null>(null);
+
+  function handleDragStart(issue: Issue) {
+    draggedId = issue.id;
+  }
+
+  function handleDragOver(e: DragEvent, issue: Issue) {
+    e.preventDefault();
+    dragOverId = issue.id;
+  }
+
+  function handleDragLeave() {
+    dragOverId = null;
+  }
+
+  async function handleDrop(e: DragEvent, targetIssue: Issue) {
+    e.preventDefault();
+    if (!draggedId || draggedId === targetIssue.id) {
+      draggedId = null;
+      dragOverId = null;
+      return;
+    }
+
+    // Compute new sort_order as average of surrounding positions
+    const allIssuesInGroup = flatIssues;
+    const targetIdx = allIssuesInGroup.findIndex((i) => i.id === targetIssue.id);
+    const prev = targetIdx > 0 ? allIssuesInGroup[targetIdx - 1] : null;
+    const next = targetIdx < allIssuesInGroup.length - 1 ? allIssuesInGroup[targetIdx + 1] : null;
+
+    let newSortOrder: number;
+    if (prev && next) {
+      newSortOrder = ((prev.sort_order ?? 0) + (next.sort_order ?? 0)) / 2;
+    } else if (prev) {
+      newSortOrder = (prev.sort_order ?? 0) + 1;
+    } else if (next) {
+      newSortOrder = (next.sort_order ?? 1) - 0.5;
+    } else {
+      newSortOrder = 1;
+    }
+
+    // Optimistic update
+    const dragged = allIssuesInGroup.find((i) => i.id === draggedId);
+    if (dragged) {
+      dragged.sort_order = newSortOrder;
+    }
+
+    await reorderIssue(draggedId, newSortOrder);
+
+    draggedId = null;
+    dragOverId = null;
+  }
+
+  function handleDragEnd() {
+    draggedId = null;
+    dragOverId = null;
+  }
 </script>
 
 <div class="issue-list">
@@ -44,10 +123,20 @@
         <span class="group-count">{group.issues.length}</span>
       </div>
       {#each group.issues as issue (issue.id)}
+        {@const flatIdx = flatIssues.findIndex((i) => i.id === issue.id)}
         <IssueRow
           {issue}
           labels={labelMap[issue.id] ?? []}
           {accent}
+          selected={selectedIndex === flatIdx}
+          dragging={draggedId === issue.id}
+          dragOver={dragOverId === issue.id}
+          onSelect={() => setSelectedIndex(flatIdx)}
+          onDragStart={() => handleDragStart(issue)}
+          onDragOver={(e) => handleDragOver(e, issue)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, issue)}
+          onDragEnd={handleDragEnd}
         />
       {/each}
     </div>
