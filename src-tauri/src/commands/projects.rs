@@ -27,7 +27,7 @@ pub fn create_project(app: tauri::AppHandle, state: State<AppState>, input: Crea
 #[tauri::command]
 pub fn list_projects(state: State<AppState>) -> Result<Vec<Project>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = db.prepare("SELECT id, name, description, notes, created_at, updated_at FROM projects ORDER BY name").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, description, notes, created_at, updated_at FROM projects ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
     let projects = stmt.query_map([], |row| {
         Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? })
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
@@ -76,7 +76,7 @@ pub struct Dashboard {
 pub fn get_dashboard(state: State<AppState>) -> Result<Dashboard, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    let mut stmt = db.prepare("SELECT id, name, description, notes, created_at, updated_at FROM projects ORDER BY name").map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare("SELECT id, name, description, notes, created_at, updated_at FROM projects ORDER BY updated_at DESC").map_err(|e| e.to_string())?;
     let projects: Vec<Project> = stmt.query_map([], |row| {
         Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? })
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
@@ -135,9 +135,18 @@ pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path
 
         let id = Uuid::new_v4().to_string();
         let dir_path = entry.path().to_string_lossy().to_string();
+
+        // Use folder's actual modification time for updated_at
+        let modified = entry.metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(now);
+
         db.execute(
             "INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
-            rusqlite::params![id, name, dir_path, now, now],
+            rusqlite::params![id, name, dir_path, modified, modified],
         ).map_err(|e| e.to_string())?;
 
         db.execute(
@@ -150,8 +159,8 @@ pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path
             name,
             description: Some(dir_path),
             notes: None,
-            created_at: now,
-            updated_at: now,
+            created_at: modified,
+            updated_at: modified,
         });
     }
 
