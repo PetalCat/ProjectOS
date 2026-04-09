@@ -15,8 +15,11 @@ export async function loadIssues(projectId: string | null, includeClosed = false
   showClosed = includeClosed;
   selectedIndex = -1;
   try {
-    issues = await listIssues(projectId, includeClosed);
+    const result = await listIssues(projectId, includeClosed);
+    console.log(`[issues store] loaded ${result.length} issues for project ${projectId}`);
+    issues = result;
   } catch (e) {
+    console.error(`[issues store] error loading issues:`, e);
     error = String(e);
   } finally {
     loading = false;

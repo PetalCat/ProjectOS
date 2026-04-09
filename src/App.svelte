@@ -122,7 +122,9 @@
       <Dashboard />
     {:else if view.kind === "project"}
       {#if currentProject}
-        <ProjectView project={currentProject} />
+        {#key currentProject.id}
+          <ProjectView project={currentProject} />
+        {/key}
       {:else}
         <div class="not-found">Project not found.</div>
       {/if}
