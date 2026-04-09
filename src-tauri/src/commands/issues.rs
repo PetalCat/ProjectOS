@@ -378,6 +378,113 @@ pub fn promote_idea(state: State<AppState>, id: String) -> Result<Issue, String>
     Ok(closed_issue)
 }
 
+#[tauri::command]
+pub fn add_dependency(state: State<AppState>, blocker_id: String, blocked_id: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let now = now_ms();
+    db.execute(
+        "INSERT OR IGNORE INTO issue_deps (blocker_id, blocked_id) VALUES (?1, ?2)",
+        rusqlite::params![blocker_id, blocked_id],
+    ).map_err(|e| e.to_string())?;
+
+    // Auto-set blocked issue to 'blocked' status
+    db.execute(
+        "UPDATE issues SET status = 'blocked', updated_at = ?1 WHERE id = ?2 AND state = 'open'",
+        rusqlite::params![now, blocked_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_dependency(state: State<AppState>, blocker_id: String, blocked_id: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let now = now_ms();
+    db.execute(
+        "DELETE FROM issue_deps WHERE blocker_id = ?1 AND blocked_id = ?2",
+        rusqlite::params![blocker_id, blocked_id],
+    ).map_err(|e| e.to_string())?;
+
+    // Re-evaluate: if no more open blockers, unblock
+    let still_blocked: i64 = db.query_row(
+        "SELECT COUNT(*) FROM issue_deps d JOIN issues i ON d.blocker_id = i.id WHERE d.blocked_id = ?1 AND i.state = 'open'",
+        [&blocked_id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    if still_blocked == 0 {
+        db.execute(
+            "UPDATE issues SET status = 'ready', updated_at = ?1 WHERE id = ?2 AND status = 'blocked'",
+            rusqlite::params![now, blocked_id],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn add_relation(state: State<AppState>, issue_a_id: String, issue_b_id: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Store with smaller id first for consistency
+    let (a, b) = if issue_a_id < issue_b_id { (issue_a_id, issue_b_id) } else { (issue_b_id, issue_a_id) };
+    db.execute(
+        "INSERT OR IGNORE INTO issue_relations (issue_a_id, issue_b_id) VALUES (?1, ?2)",
+        rusqlite::params![a, b],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_relation(state: State<AppState>, issue_a_id: String, issue_b_id: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute(
+        "DELETE FROM issue_relations WHERE (issue_a_id = ?1 AND issue_b_id = ?2) OR (issue_a_id = ?2 AND issue_b_id = ?1)",
+        rusqlite::params![issue_a_id, issue_b_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn assign_issue(state: State<AppState>, issue_id: String, assignee_name: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Upsert assignee
+    let assignee_id: String = match db.query_row("SELECT id FROM assignees WHERE name = ?1", [&assignee_name], |r| r.get(0)) {
+        Ok(id) => id,
+        Err(_) => {
+            let id = Uuid::new_v4().to_string();
+            db.execute("INSERT INTO assignees (id, name) VALUES (?1, ?2)", rusqlite::params![id, assignee_name]).map_err(|e| e.to_string())?;
+            id
+        }
+    };
+    db.execute(
+        "INSERT OR IGNORE INTO issue_assignees (issue_id, assignee_id) VALUES (?1, ?2)",
+        rusqlite::params![issue_id, assignee_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unassign_issue(state: State<AppState>, issue_id: String, assignee_name: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute(
+        "DELETE FROM issue_assignees WHERE issue_id = ?1 AND assignee_id = (SELECT id FROM assignees WHERE name = ?2)",
+        rusqlite::params![issue_id, assignee_name],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_issue_assignees(state: State<AppState>, issue_id: String) -> Result<Vec<String>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db.prepare(
+        "SELECT a.name FROM assignees a JOIN issue_assignees ia ON a.id = ia.assignee_id WHERE ia.issue_id = ?1 ORDER BY a.name"
+    ).map_err(|e| e.to_string())?;
+    let names = stmt.query_map([&issue_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(names)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,5 +733,37 @@ mod tests {
             |row| row.get(0),
         ).unwrap();
         assert_eq!(action, "promoted");
+    }
+
+    #[test]
+    fn test_add_and_remove_dependency() {
+        let state = test_state();
+        let db = state.db.lock().unwrap();
+        db.execute("INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES ('p1', 'T', NULL, NULL, 1000, 1000)", []).unwrap();
+        db.execute("INSERT INTO issues (id, project_id, number, title, state, status, sort_order, locked, pinned, created_at, updated_at) VALUES ('a', 'p1', 1, 'A', 'open', 'ready', 1.0, 0, 0, 1000, 1000)", []).unwrap();
+        db.execute("INSERT INTO issues (id, project_id, number, title, state, status, sort_order, locked, pinned, created_at, updated_at) VALUES ('b', 'p1', 2, 'B', 'open', 'ready', 2.0, 0, 0, 1000, 1000)", []).unwrap();
+
+        db.execute("INSERT INTO issue_deps (blocker_id, blocked_id) VALUES ('a', 'b')", []).unwrap();
+        db.execute("UPDATE issues SET status = 'blocked' WHERE id = 'b'", []).unwrap();
+
+        db.execute("DELETE FROM issue_deps WHERE blocker_id = 'a' AND blocked_id = 'b'", []).unwrap();
+        let still_blocked: i64 = db.query_row("SELECT COUNT(*) FROM issue_deps d JOIN issues i ON d.blocker_id = i.id WHERE d.blocked_id = 'b' AND i.state = 'open'", [], |r| r.get(0)).unwrap();
+        if still_blocked == 0 {
+            db.execute("UPDATE issues SET status = 'ready' WHERE id = 'b' AND status = 'blocked'", []).unwrap();
+        }
+        let status: String = db.query_row("SELECT status FROM issues WHERE id = 'b'", [], |r| r.get(0)).unwrap();
+        assert_eq!(status, "ready");
+    }
+
+    #[test]
+    fn test_assignees() {
+        let state = test_state();
+        let db = state.db.lock().unwrap();
+        db.execute("INSERT INTO issues (id, title, state, status, sort_order, locked, pinned, created_at, updated_at) VALUES ('i1', 'T', 'open', 'idea', 1.0, 0, 0, 1000, 1000)", []).unwrap();
+        db.execute("INSERT INTO assignees (id, name) VALUES ('a1', 'parker')", []).unwrap();
+        db.execute("INSERT INTO issue_assignees (issue_id, assignee_id) VALUES ('i1', 'a1')", []).unwrap();
+
+        let name: String = db.query_row("SELECT a.name FROM assignees a JOIN issue_assignees ia ON a.id = ia.assignee_id WHERE ia.issue_id = 'i1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "parker");
     }
 }
