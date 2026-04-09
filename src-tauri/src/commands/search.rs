@@ -17,7 +17,7 @@ pub fn search_issues(state: State<AppState>, query: String) -> Result<SearchResu
 
     // FTS search on issues
     let mut stmt = db.prepare(
-        "SELECT i.id, i.project_id, i.number, i.title, i.body, i.state, i.status, i.sort_order, i.context, i.machine_id, i.milestone_id, i.locked, i.pinned, i.external_source, i.external_id, i.external_url, i.created_at, i.updated_at, i.closed_at
+        "SELECT i.id, i.project_id, i.number, i.title, i.body, i.state, i.status, i.sort_order, i.context, i.machine_id, i.milestone_id, i.locked, i.pinned, i.created_at, i.updated_at, i.closed_at, i.external_source, i.external_id, i.external_url
          FROM issues i JOIN issues_fts f ON i.rowid = f.rowid
          WHERE issues_fts MATCH ?1
          ORDER BY rank LIMIT 20"
@@ -30,8 +30,8 @@ pub fn search_issues(state: State<AppState>, query: String) -> Result<SearchResu
             context: row.get(8)?, machine_id: row.get(9)?, milestone_id: row.get(10)?,
             locked: row.get::<_, i64>(11).map(|v| v != 0)?,
             pinned: row.get::<_, i64>(12).map(|v| v != 0)?,
-            external_source: row.get(13)?, external_id: row.get(14)?, external_url: row.get(15)?,
-            created_at: row.get(16)?, updated_at: row.get(17)?, closed_at: row.get(18)?,
+            created_at: row.get(13)?, updated_at: row.get(14)?, closed_at: row.get(15)?,
+            external_source: row.get(16)?, external_id: row.get(17)?, external_url: row.get(18)?,
         })
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
 
