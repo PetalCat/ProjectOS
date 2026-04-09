@@ -27,41 +27,43 @@
     </button>
   </div>
 
-  <div class="sidebar-section">
-    <div class="section-header">Projects</div>
-    {#if projects.length === 0}
-      <div class="empty-list">No projects yet</div>
-    {/if}
-    {#each projects as project, i (project.id)}
-      {@const color = projectColor(i)}
-      {@const active = view.kind === "project" && view.projectId === project.id}
-      <button
-        class="sidebar-item"
-        class:active
-        onclick={() => navigate({ kind: "project", projectId: project.id })}
-      >
-        <span class="project-dot" style:background={color}></span>
-        <span class="item-name">{project.name}</span>
-      </button>
-    {/each}
-  </div>
-
-  {#if machines.length > 0}
+  <div class="sidebar-scroll">
     <div class="sidebar-section">
-      <div class="section-header">Machines</div>
-      {#each machines as machine (machine.id)}
-        {@const active = view.kind === "machine" && view.machineId === machine.id}
+      <div class="section-header">Projects</div>
+      {#if projects.length === 0}
+        <div class="empty-list">No projects yet</div>
+      {/if}
+      {#each projects as project, i (project.id)}
+        {@const color = projectColor(i)}
+        {@const active = view.kind === "project" && view.projectId === project.id}
         <button
           class="sidebar-item"
           class:active
-          onclick={() => navigate({ kind: "machine", machineId: machine.id })}
+          onclick={() => navigate({ kind: "project", projectId: project.id })}
         >
-          <span class="machine-icon">⬡</span>
-          <span class="item-name">{machine.name}</span>
+          <span class="project-dot" style:background={color}></span>
+          <span class="item-name">{project.name}</span>
         </button>
       {/each}
     </div>
-  {/if}
+
+    {#if machines.length > 0}
+      <div class="sidebar-section">
+        <div class="section-header">Machines</div>
+        {#each machines as machine (machine.id)}
+          {@const active = view.kind === "machine" && view.machineId === machine.id}
+          <button
+            class="sidebar-item"
+            class:active
+            onclick={() => navigate({ kind: "machine", machineId: machine.id })}
+          >
+            <span class="machine-icon">⬡</span>
+            <span class="item-name">{machine.name}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
 
   <div class="sidebar-footer">
     <button
@@ -138,9 +140,14 @@
     letter-spacing: -0.01em;
   }
 
+  .sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
   .sidebar-section {
     padding: 12px 12px 4px;
-    flex-shrink: 0;
   }
 
   .section-header {
