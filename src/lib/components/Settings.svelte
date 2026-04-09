@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { scanDeveloperFolder } from "$lib/commands";
+  import { scanDeveloperFolder, rescanTimestamps } from "$lib/commands";
   import { loadProjects } from "$lib/stores/projects.svelte";
   import type { Project } from "$lib/types";
 
@@ -7,6 +7,10 @@
   let scanning = $state(false);
   let scanResult = $state<Project[] | null>(null);
   let scanError = $state<string | null>(null);
+
+  let rescanning = $state(false);
+  let rescanResult = $state<number | null>(null);
+  let rescanError = $state<string | null>(null);
 
   async function handleScan() {
     scanning = true;
@@ -20,6 +24,21 @@
       scanError = String(e);
     } finally {
       scanning = false;
+    }
+  }
+
+  async function handleRescan() {
+    rescanning = true;
+    rescanResult = null;
+    rescanError = null;
+    try {
+      const count = await rescanTimestamps();
+      rescanResult = count;
+      await loadProjects();
+    } catch (e) {
+      rescanError = String(e);
+    } finally {
+      rescanning = false;
     }
   }
 </script>
@@ -41,7 +60,20 @@
       <button class="scan-btn" onclick={handleScan} disabled={scanning}>
         {scanning ? "Scanning..." : "Scan"}
       </button>
+      <button class="rescan-btn" onclick={handleRescan} disabled={rescanning}>
+        {rescanning ? "Rescanning..." : "Rescan Timestamps"}
+      </button>
     </div>
+
+    {#if rescanResult !== null}
+      <div class="scan-result">
+        <p class="result-success">Updated timestamps for {rescanResult} project{rescanResult === 1 ? "" : "s"}.</p>
+      </div>
+    {/if}
+
+    {#if rescanError}
+      <div class="scan-error">{rescanError}</div>
+    {/if}
 
     {#if scanResult !== null}
       <div class="scan-result">
@@ -138,6 +170,29 @@
   }
 
   .scan-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .rescan-btn {
+    background: #3a3a2a;
+    color: #c0b89a;
+    border: 1px solid #4a4a38;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-family: "Inter", sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+  }
+
+  .rescan-btn:hover {
+    opacity: 0.85;
+  }
+
+  .rescan-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Project, Milestone, Label } from "$lib/types";
   import { loadIssues, getIssues, isLoading, getShowClosed } from "$lib/stores/issues.svelte";
-  import { listMilestones, createIssue, getIssueLabels } from "$lib/commands";
+  import { listMilestones, createIssue, getIssueLabels, syncGithubIssues } from "$lib/commands";
   import { projectColor, getProjects } from "$lib/stores/projects.svelte";
   import IssueList from "./IssueList.svelte";
   import MilestoneBar from "./MilestoneBar.svelte";
@@ -89,6 +89,23 @@
   function toggleClosed() {
     showClosed = !showClosed;
   }
+
+  let syncingGithub = $state(false);
+  let syncGithubResult = $state<number | null>(null);
+
+  async function handleSyncGithub() {
+    syncingGithub = true;
+    syncGithubResult = null;
+    try {
+      const count = await syncGithubIssues(project.id);
+      syncGithubResult = count;
+      await refresh();
+    } catch {
+      // ignore
+    } finally {
+      syncingGithub = false;
+    }
+  }
 </script>
 
 <div class="project-view">
@@ -106,9 +123,16 @@
         </button>
       </div>
     </div>
-    <button class="new-issue-btn" style:background={accent} onclick={() => { creatingIssue = true; }}>
-      + New Issue
-    </button>
+    <div class="header-actions">
+      {#if project.github_repo}
+        <button class="github-sync-btn" onclick={handleSyncGithub} disabled={syncingGithub} title="Sync issues from GitHub: {project.github_repo}">
+          {syncingGithub ? "Syncing…" : syncGithubResult !== null ? `Synced ${syncGithubResult}` : "Sync GitHub Issues"}
+        </button>
+      {/if}
+      <button class="new-issue-btn" style:background={accent} onclick={() => { creatingIssue = true; }}>
+        + New Issue
+      </button>
+    </div>
   </div>
 
   {#if activeMilestone}
@@ -219,6 +243,13 @@
     background: rgba(255, 255, 255, 0.05);
   }
 
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
   .new-issue-btn {
     font-size: 12px;
     font-weight: 700;
@@ -233,6 +264,28 @@
 
   .new-issue-btn:hover {
     opacity: 0.85;
+  }
+
+  .github-sync-btn {
+    font-size: 12px;
+    font-weight: 600;
+    color: #c0b89a;
+    background: #1e1e18;
+    border: 1px solid #3a3a2a;
+    border-radius: 7px;
+    padding: 6px 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: opacity 0.12s;
+  }
+
+  .github-sync-btn:hover {
+    opacity: 0.85;
+  }
+
+  .github-sync-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .milestone-wrap {

@@ -50,13 +50,16 @@ pub fn row_to_issue(row: &rusqlite::Row) -> Result<Issue, rusqlite::Error> {
         milestone_id: row.get(10)?,
         locked: row.get::<_, i64>(11)? != 0,
         pinned: row.get::<_, i64>(12)? != 0,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
-        closed_at: row.get(15)?,
+        external_source: row.get(13)?,
+        external_id: row.get(14)?,
+        external_url: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
+        closed_at: row.get(18)?,
     })
 }
 
-pub const ISSUE_COLUMNS: &str = "id, project_id, number, title, body, state, status, sort_order, context, machine_id, milestone_id, locked, pinned, created_at, updated_at, closed_at";
+pub const ISSUE_COLUMNS: &str = "id, project_id, number, title, body, state, status, sort_order, context, machine_id, milestone_id, locked, pinned, external_source, external_id, external_url, created_at, updated_at, closed_at";
 
 #[tauri::command]
 pub fn create_issue(app: tauri::AppHandle, state: State<AppState>, input: CreateIssue) -> Result<Issue, String> {
@@ -366,7 +369,7 @@ pub fn promote_idea(app: tauri::AppHandle, state: State<AppState>, id: String) -
     // Create project from issue title/body
     let project_id = Uuid::new_v4().to_string();
     db.execute(
-        "INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
+        "INSERT INTO projects (id, name, description, notes, github_repo, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5)",
         rusqlite::params![project_id, issue.title, issue.body, now, now],
     ).map_err(|e| e.to_string())?;
 
