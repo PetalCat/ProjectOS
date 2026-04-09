@@ -140,6 +140,23 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 
         CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at);
         CREATE INDEX IF NOT EXISTS idx_activity_log_project_id ON activity_log(project_id);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS issues_fts USING fts5(
+            title, body, content='issues', content_rowid='rowid'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS issues_fts_insert AFTER INSERT ON issues BEGIN
+            INSERT INTO issues_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS issues_fts_delete AFTER DELETE ON issues BEGIN
+            INSERT INTO issues_fts(issues_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS issues_fts_update AFTER UPDATE ON issues BEGIN
+            INSERT INTO issues_fts(issues_fts, rowid, title, body) VALUES('delete', old.rowid, old.title, old.body);
+            INSERT INTO issues_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+        END;
         "
     )
 }

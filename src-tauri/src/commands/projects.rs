@@ -55,6 +55,54 @@ pub fn delete_project(state: State<AppState>, id: String) -> Result<(), String> 
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+pub struct DashboardProject {
+    pub project: Project,
+    pub next_issue: Option<crate::models::issue::Issue>,
+    pub open_count: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct Dashboard {
+    pub projects: Vec<DashboardProject>,
+    pub recent_activity: Vec<crate::models::activity::ActivityEntry>,
+}
+
+#[tauri::command]
+pub fn get_dashboard(state: State<AppState>) -> Result<Dashboard, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = db.prepare("SELECT id, name, description, notes, created_at, updated_at FROM projects ORDER BY name").map_err(|e| e.to_string())?;
+    let projects: Vec<Project> = stmt.query_map([], |row| {
+        Ok(Project { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, notes: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)? })
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    let mut dashboard_projects = Vec::new();
+    for project in projects {
+        let open_count: i64 = db.query_row(
+            "SELECT COUNT(*) FROM issues WHERE project_id = ?1 AND state = 'open'",
+            [&project.id], |r| r.get(0),
+        ).map_err(|e| e.to_string())?;
+
+        let next_issue = db.query_row(
+            &format!("SELECT {} FROM issues WHERE project_id = ?1 AND status = 'next' AND state = 'open' LIMIT 1", crate::commands::issues::ISSUE_COLUMNS),
+            [&project.id],
+            |row| crate::commands::issues::row_to_issue(row),
+        ).ok();
+
+        dashboard_projects.push(DashboardProject { project, next_issue, open_count });
+    }
+
+    let mut stmt = db.prepare(
+        "SELECT id, issue_id, project_id, action, detail, created_at FROM activity_log ORDER BY created_at DESC LIMIT 20"
+    ).map_err(|e| e.to_string())?;
+    let recent_activity = stmt.query_map([], |row| {
+        Ok(crate::models::activity::ActivityEntry { id: row.get(0)?, issue_id: row.get(1)?, project_id: row.get(2)?, action: row.get(3)?, detail: row.get(4)?, created_at: row.get(5)? })
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    Ok(Dashboard { projects: dashboard_projects, recent_activity })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::db;
