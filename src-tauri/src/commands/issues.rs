@@ -130,7 +130,7 @@ pub fn list_issues(
 
     let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
 
-    let issues = match &project_id {
+    let issues: Vec<Issue> = match &project_id {
         Some(pid) => stmt
             .query_map([pid], row_to_issue)
             .map_err(|e| e.to_string())?
@@ -144,6 +144,23 @@ pub fn list_issues(
     };
 
     Ok(issues)
+}
+
+#[tauri::command]
+pub fn debug_issues(state: State<AppState>, project_id: String) -> Result<String, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let count: i64 = db.query_row(
+        "SELECT COUNT(*) FROM issues WHERE project_id = ?1",
+        [&project_id], |row| row.get(0)
+    ).map_err(|e| e.to_string())?;
+    let open_count: i64 = db.query_row(
+        "SELECT COUNT(*) FROM issues WHERE project_id = ?1 AND state = 'open'",
+        [&project_id], |row| row.get(0)
+    ).map_err(|e| e.to_string())?;
+    let db_path = db.path().unwrap_or("unknown").to_string();
+    let all_count: i64 = db.query_row("SELECT COUNT(*) FROM issues", [], |row| row.get(0)).map_err(|e| e.to_string())?;
+    let all_projects: i64 = db.query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0)).map_err(|e| e.to_string())?;
+    Ok(format!("db={}, total_projects={}, total_issues={}, issues_for_project={}, open={}", db_path, all_projects, all_count, count, open_count))
 }
 
 #[tauri::command]
