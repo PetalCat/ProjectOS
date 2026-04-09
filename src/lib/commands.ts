@@ -237,3 +237,8 @@ export const searchIssues = (query: string) =>
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export const getDashboard = () => invoke<Dashboard>("get_dashboard");
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+
+export const scanDeveloperFolder = (path: string) =>
+  invoke<Project[]>("scan_developer_folder", { path });

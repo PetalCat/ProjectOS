@@ -107,6 +107,58 @@ pub fn get_dashboard(state: State<AppState>) -> Result<Dashboard, String> {
     Ok(Dashboard { projects: dashboard_projects, recent_activity })
 }
 
+#[tauri::command]
+pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path: String) -> Result<Vec<Project>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let now = now_ms();
+    let mut created = Vec::new();
+
+    let entries = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Skip hidden dirs
+        if name.starts_with('.') {
+            continue;
+        }
+        // Skip if project already exists with this name
+        let exists: bool = db.query_row(
+            "SELECT COUNT(*) > 0 FROM projects WHERE name = ?1",
+            [&name],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        if exists {
+            continue;
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let dir_path = entry.path().to_string_lossy().to_string();
+        db.execute(
+            "INSERT INTO projects (id, name, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
+            rusqlite::params![id, name, dir_path, now, now],
+        ).map_err(|e| e.to_string())?;
+
+        db.execute(
+            "INSERT INTO activity_log (issue_id, project_id, action, detail, created_at) VALUES (NULL, ?1, 'created', ?2, ?3)",
+            rusqlite::params![id, serde_json::json!({"title": name, "source": "scan"}).to_string(), now],
+        ).map_err(|e| e.to_string())?;
+
+        created.push(Project {
+            id,
+            name,
+            description: Some(dir_path),
+            notes: None,
+            created_at: now,
+            updated_at: now,
+        });
+    }
+
+    let _ = app.emit("projects-changed", ());
+    Ok(created)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::db;

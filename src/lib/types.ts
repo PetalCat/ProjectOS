@@ -111,4 +111,5 @@ export type View =
   | { kind: "home" }
   | { kind: "project"; projectId: string }
   | { kind: "issue"; issueId: string }
-  | { kind: "machine"; machineId: string };
+  | { kind: "machine"; machineId: string }
+  | { kind: "settings" };

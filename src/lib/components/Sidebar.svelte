@@ -64,6 +64,14 @@
   {/if}
 
   <div class="sidebar-footer">
+    <button
+      class="settings-btn"
+      class:active={view.kind === "settings"}
+      onclick={() => navigate({ kind: "settings" })}
+    >
+      <span class="settings-icon">⚙</span>
+      <span>Settings</span>
+    </button>
     <button class="kbd-hint" onclick={openSearch}>
       <kbd>⌘K</kbd> Search
     </button>
@@ -227,6 +235,25 @@
   }
 
   .kbd-hint:hover { color: #5a5a4a; }
+
+  .settings-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    color: #3a3a2a;
+    font-family: "Inter", sans-serif;
+    margin-bottom: 6px;
+    transition: color 0.12s;
+  }
+  .settings-btn:hover { color: #6a6a5a; }
+  .settings-btn.active { color: #c0b89a; }
+  .settings-icon { font-size: 13px; }
 
   .kbd-hint.static {
     pointer-events: none;
