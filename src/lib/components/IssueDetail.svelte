@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Issue, Label, Milestone } from "$lib/types";
+  import { onMount } from "svelte";
   import {
     getIssue,
     updateIssue,
@@ -7,12 +8,16 @@
     reopenIssue,
     getIssueLabels,
     listMilestones,
+    publishIssueToGithub,
   } from "$lib/commands";
+  import { onGithubPushError } from "$lib/events";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { navigate, navigateBack } from "$lib/stores/navigation.svelte";
   import { getProjects, projectColor } from "$lib/stores/projects.svelte";
   import StatusBadge from "./StatusBadge.svelte";
   import LabelBadge from "./LabelBadge.svelte";
   import CommentThread from "./CommentThread.svelte";
+  import Markdown from "./Markdown.svelte";
 
   type Props = {
     issueId: string;
@@ -28,6 +33,26 @@
   let contextDraft = $state("");
   let editingTitle = $state(false);
   let titleDraft = $state("");
+  let editingBody = $state(false);
+  let bodyDraft = $state("");
+  let publishingGithub = $state(false);
+  let pushError = $state<string | null>(null);
+  let pushErrorTimer: number | null = null;
+
+  onMount(() => {
+    let unlisten: (() => void) | null = null;
+    onGithubPushError((payload) => {
+      if (issue && payload.issue_id === issue.id) {
+        pushError = payload.message;
+        if (pushErrorTimer) clearTimeout(pushErrorTimer);
+        pushErrorTimer = window.setTimeout(() => { pushError = null; }, 8000);
+      }
+    }).then((fn) => { unlisten = fn; });
+    return () => {
+      if (unlisten) unlisten();
+      if (pushErrorTimer) clearTimeout(pushErrorTimer);
+    };
+  });
 
   const projects = $derived(getProjects());
   const project = $derived(issue?.project_id ? projects.find((p) => p.id === issue!.project_id) ?? null : null);
@@ -81,6 +106,34 @@
     issue = await updateIssue({ id: issue.id, title: titleDraft.trim() });
     editingTitle = false;
   }
+
+  async function saveBody() {
+    if (!issue) return;
+    const newBody = bodyDraft.trim();
+    issue = await updateIssue({ id: issue.id, body: newBody.length === 0 ? null : newBody });
+    editingBody = false;
+  }
+
+  async function publishToGithub() {
+    if (!issue || publishingGithub) return;
+    publishingGithub = true;
+    try {
+      issue = await publishIssueToGithub(issue.id);
+    } catch (e) {
+      pushError = String(e);
+      if (pushErrorTimer) clearTimeout(pushErrorTimer);
+      pushErrorTimer = window.setTimeout(() => { pushError = null; }, 8000);
+    } finally {
+      publishingGithub = false;
+    }
+  }
+
+  const linkedToGithub = $derived(
+    issue?.external_source === "github" && !!issue?.external_url
+  );
+  const canPublishToGithub = $derived(
+    !!issue && !linkedToGithub && !!project?.github_repo
+  );
 
   function backLabel(): string {
     return project ? `← ${project.name}` : "← Back";
@@ -141,16 +194,45 @@
       </div>
     </div>
 
+    {#if pushError}
+      <div class="push-error-banner">
+        <span class="banner-icon">⚠</span>
+        GitHub push failed: {pushError}
+        <button class="banner-dismiss" onclick={() => { pushError = null; }}>×</button>
+      </div>
+    {/if}
+
     <div class="detail-body">
       <div class="detail-main">
-        {#if issue.body}
-          <div class="body-card">
-            <div class="body-content">{issue.body}</div>
+        {#if editingBody}
+          <div class="body-card edit-mode">
+            <textarea
+              class="body-edit-input"
+              bind:value={bodyDraft}
+              placeholder="Markdown supported…"
+              onkeydown={(e) => { if (e.key === "Escape") { editingBody = false; } if (e.key === "Enter" && e.metaKey) saveBody(); }}
+            ></textarea>
+            <div class="body-edit-actions">
+              <span class="body-edit-hint">⌘↵ save · esc cancel</span>
+              <button class="cancel-small-btn" onclick={() => editingBody = false}>Cancel</button>
+              <button class="confirm-btn" onclick={saveBody}>Save</button>
+            </div>
           </div>
+        {:else if issue.body}
+          <button
+            class="body-card editable"
+            onclick={() => { editingBody = true; bodyDraft = issue!.body ?? ""; }}
+            title="Click to edit"
+          >
+            <Markdown source={issue.body} />
+          </button>
         {:else}
-          <div class="body-card empty-body">
-            <span>No description.</span>
-          </div>
+          <button
+            class="body-card empty-body editable"
+            onclick={() => { editingBody = true; bodyDraft = ""; }}
+          >
+            <span>No description. Click to add…</span>
+          </button>
         {/if}
 
         <div class="context-block" class:has-context={!!issue.context}>
@@ -175,7 +257,7 @@
               <button class="cancel-small-btn" onclick={() => editingContext = false}>Cancel</button>
             </div>
           {:else if issue.context}
-            <div class="context-text">{issue.context}</div>
+            <div class="context-text"><Markdown source={issue.context} inline /></div>
           {:else}
             <div class="context-empty">No context saved yet.</div>
           {/if}
@@ -233,6 +315,26 @@
             </div>
           </div>
         {/if}
+
+        <div class="sidebar-section">
+          <div class="sidebar-label">Source</div>
+          <div class="sidebar-value">
+            {#if linkedToGithub}
+              <button class="github-link" onclick={() => issue!.external_url && openUrl(issue!.external_url)}>
+                <span class="gh-icon">GH</span>
+                <span class="gh-ref">{issue.external_id}</span>
+              </button>
+              <div class="source-hint">Edits, close/reopen, and comments sync to GitHub automatically.</div>
+            {:else if canPublishToGithub}
+              <button class="publish-btn" onclick={publishToGithub} disabled={publishingGithub}>
+                {publishingGithub ? "Publishing…" : "Publish to GitHub"}
+              </button>
+              <div class="source-hint">Creates a GitHub issue in {project?.github_repo} and links it.</div>
+            {:else}
+              <div class="source-hint source-local">Local only</div>
+            {/if}
+          </div>
+        </div>
 
         <div class="sidebar-section">
           <div class="sidebar-label">Actions</div>
@@ -366,18 +468,125 @@
     padding: 16px;
   }
 
-  .body-content {
-    font-size: 14px;
-    color: #c8c8b8;
-    line-height: 1.6;
-    white-space: pre-wrap;
-  }
-
   .empty-body {
     color: #4a4a3a;
     font-style: italic;
     font-size: 13px;
   }
+
+  .body-card.editable {
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+    width: 100%;
+    display: block;
+  }
+  .body-card.editable:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .body-card.edit-mode {
+    padding: 12px;
+  }
+
+  .body-edit-input {
+    width: 100%;
+    min-height: 160px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-family: "SF Mono", Menlo, monospace;
+    color: #d0d0c0;
+    resize: vertical;
+    outline: none;
+    box-sizing: border-box;
+  }
+  .body-edit-input:focus { border-color: rgba(255, 255, 255, 0.2); }
+
+  .body-edit-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .body-edit-hint {
+    font-size: 10px;
+    color: #3a3a2a;
+    margin-right: auto;
+  }
+
+  .push-error-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(232, 160, 64, 0.12);
+    border-bottom: 1px solid rgba(232, 160, 64, 0.3);
+    color: #e8b060;
+    padding: 8px 24px;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .banner-icon { font-size: 13px; }
+  .banner-dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #e8b060;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .banner-dismiss:hover { color: #ffcc80; }
+
+  .github-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #1a1a14;
+    border: 1px solid #3a3a28;
+    border-radius: 7px;
+    padding: 5px 10px;
+    color: #d8d8c0;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.1s;
+  }
+  .github-link:hover { border-color: #6a6a4a; }
+
+  .gh-icon {
+    font-size: 10px;
+    font-weight: 800;
+    color: #b8e060;
+  }
+  .gh-ref { color: #a8a898; font-family: "SF Mono", Menlo, monospace; }
+
+  .publish-btn {
+    background: #1a1a14;
+    border: 1px solid #4a4a28;
+    color: #c8c8a0;
+    border-radius: 7px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .publish-btn:hover:not(:disabled) { border-color: #8a8a4a; color: #e8e8c0; }
+  .publish-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .source-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #5a5a4a;
+    line-height: 1.4;
+  }
+  .source-hint.source-local { font-style: italic; }
 
   .context-block {
     border: 1px dashed rgba(255, 255, 255, 0.08);
@@ -422,7 +631,6 @@
     font-size: 13px;
     color: #a0a090;
     line-height: 1.5;
-    white-space: pre-wrap;
   }
 
   .context-empty {
@@ -482,8 +690,6 @@
     flex-direction: column;
     gap: 20px;
   }
-
-  .sidebar-section {}
 
   .sidebar-label {
     font-size: 10px;

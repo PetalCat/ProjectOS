@@ -247,3 +247,6 @@ export const rescanTimestamps = () => invoke<number>("rescan_timestamps");
 
 export const syncGithubIssues = (project_id: string) =>
   invoke<number>("sync_github_issues", { projectId: project_id });
+
+export const publishIssueToGithub = (issue_id: string) =>
+  invoke<Issue>("publish_issue_to_github", { issueId: issue_id });

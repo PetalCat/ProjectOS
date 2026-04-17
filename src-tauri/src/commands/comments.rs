@@ -1,6 +1,6 @@
 use crate::models::comment::{Comment, CreateComment, UpdateComment};
 use crate::state::AppState;
-use tauri::State;
+use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 fn now_ms() -> i64 {
@@ -11,31 +11,73 @@ fn now_ms() -> i64 {
 }
 
 #[tauri::command]
-pub fn create_comment(state: State<AppState>, input: CreateComment) -> Result<Comment, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+pub fn create_comment(
+    app: AppHandle,
+    state: State<AppState>,
+    input: CreateComment,
+) -> Result<Comment, String> {
+    let issue_id = input.issue_id.clone();
+    let body_text = input.body.clone();
 
-    // Check if issue is locked
-    let locked: bool = db.query_row(
-        "SELECT locked FROM issues WHERE id = ?1", [&input.issue_id], |row| row.get::<_, i64>(0).map(|v| v != 0),
-    ).map_err(|e| e.to_string())?;
+    let (comment, gh_link) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    if locked {
-        return Err("Issue is locked".to_string());
+        let locked: bool = db
+            .query_row(
+                "SELECT locked FROM issues WHERE id = ?1",
+                [&issue_id],
+                |row| row.get::<_, i64>(0).map(|v| v != 0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        if locked {
+            return Err("Issue is locked".to_string());
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let now = now_ms();
+        db.execute(
+            "INSERT INTO issue_comments (id, issue_id, body, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, issue_id, body_text, now, now],
+        )
+        .map_err(|e| e.to_string())?;
+
+        db.execute(
+            "INSERT INTO activity_log (issue_id, project_id, action, detail, created_at) VALUES (?1, (SELECT project_id FROM issues WHERE id = ?1), 'commented', NULL, ?2)",
+            rusqlite::params![issue_id, now],
+        )
+        .map_err(|e| e.to_string())?;
+
+        let row: Result<(Option<String>, Option<String>), _> = db.query_row(
+            "SELECT external_source, external_id FROM issues WHERE id = ?1",
+            [&issue_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        );
+        let gh_link = match row {
+            Ok((Some(src), Some(eid))) if src == "github" => {
+                eid.rfind('#').and_then(|h| {
+                    let repo = eid[..h].to_string();
+                    eid[h + 1..].parse::<i64>().ok().map(|n| (repo, n))
+                })
+            }
+            _ => None,
+        };
+
+        let comment = Comment {
+            id,
+            issue_id: issue_id.clone(),
+            body: body_text.clone(),
+            created_at: now,
+            updated_at: now,
+        };
+        (comment, gh_link)
+    };
+
+    if let Some((repo, number)) = gh_link {
+        crate::commands::github::spawn_push_comment(app, issue_id, repo, number, body_text);
     }
 
-    let id = Uuid::new_v4().to_string();
-    let now = now_ms();
-    db.execute(
-        "INSERT INTO issue_comments (id, issue_id, body, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![id, input.issue_id, input.body, now, now],
-    ).map_err(|e| e.to_string())?;
-
-    db.execute(
-        "INSERT INTO activity_log (issue_id, project_id, action, detail, created_at) VALUES (?1, (SELECT project_id FROM issues WHERE id = ?1), 'commented', NULL, ?2)",
-        rusqlite::params![input.issue_id, now],
-    ).map_err(|e| e.to_string())?;
-
-    Ok(Comment { id, issue_id: input.issue_id, body: input.body, created_at: now, updated_at: now })
+    Ok(comment)
 }
 
 #[tauri::command]
