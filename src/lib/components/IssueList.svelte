@@ -2,7 +2,12 @@
   import type { Issue, Label } from "$lib/types";
   import IssueRow from "./IssueRow.svelte";
   import { getSelectedIndex, setSelectedIndex } from "$lib/stores/issues.svelte";
-  import { reorderIssue } from "$lib/commands";
+  import { reorderIssue, updateIssue } from "$lib/commands";
+
+  function effectiveStatus(i: Issue): string {
+    if (i.pinned) return "pinned";
+    return i.status ?? "ready";
+  }
 
   type Props = {
     issues: Issue[];
@@ -68,39 +73,61 @@
 
   async function handleDrop(e: DragEvent, targetIssue: Issue) {
     e.preventDefault();
-    if (!draggedId || draggedId === targetIssue.id) {
+    const dragId = draggedId;
+    if (!dragId || dragId === targetIssue.id) {
       draggedId = null;
       dragOverId = null;
       return;
     }
 
-    // Compute new sort_order as average of surrounding positions
-    const allIssuesInGroup = flatIssues;
-    const targetIdx = allIssuesInGroup.findIndex((i) => i.id === targetIssue.id);
-    const prev = targetIdx > 0 ? allIssuesInGroup[targetIdx - 1] : null;
-    const next = targetIdx < allIssuesInGroup.length - 1 ? allIssuesInGroup[targetIdx + 1] : null;
+    const dragged = issues.find((i) => i.id === dragId);
+    if (!dragged) {
+      draggedId = null;
+      dragOverId = null;
+      return;
+    }
+
+    const draggedStatus = effectiveStatus(dragged);
+    const targetStatus = effectiveStatus(targetIssue);
+    const crossGroup = draggedStatus !== targetStatus;
+
+    // If crossing status groups (and neither is "pinned"), compute sort_order
+    // relative to the target group so the item lands near the drop target.
+    let neighbors: Issue[];
+    if (crossGroup && targetStatus !== "pinned" && draggedStatus !== "pinned") {
+      neighbors = flatIssues.filter((i) => effectiveStatus(i) === targetStatus);
+    } else {
+      neighbors = flatIssues;
+    }
+
+    const targetIdx = neighbors.findIndex((i) => i.id === targetIssue.id);
+    const prev = targetIdx > 0 ? neighbors[targetIdx - 1] : null;
+    const next = targetIdx < neighbors.length - 1 ? neighbors[targetIdx + 1] : null;
 
     let newSortOrder: number;
-    if (prev && next) {
+    if (prev && prev.id !== dragId && next && next.id !== dragId) {
       newSortOrder = ((prev.sort_order ?? 0) + (next.sort_order ?? 0)) / 2;
-    } else if (prev) {
+    } else if (prev && prev.id !== dragId) {
       newSortOrder = (prev.sort_order ?? 0) + 1;
-    } else if (next) {
+    } else if (next && next.id !== dragId) {
       newSortOrder = (next.sort_order ?? 1) - 0.5;
     } else {
-      newSortOrder = 1;
+      newSortOrder = targetIssue.sort_order ?? 1;
     }
 
-    // Optimistic update
-    const dragged = allIssuesInGroup.find((i) => i.id === draggedId);
-    if (dragged) {
-      dragged.sort_order = newSortOrder;
+    // Optimistic UI update
+    dragged.sort_order = newSortOrder;
+    if (crossGroup && targetStatus !== "pinned" && draggedStatus !== "pinned") {
+      dragged.status = targetStatus as Issue["status"];
     }
-
-    await reorderIssue(draggedId, newSortOrder);
 
     draggedId = null;
     dragOverId = null;
+
+    if (crossGroup && targetStatus !== "pinned" && draggedStatus !== "pinned") {
+      await updateIssue({ id: dragId, status: targetStatus });
+    }
+    await reorderIssue(dragId, newSortOrder);
   }
 
   function handleDragEnd() {

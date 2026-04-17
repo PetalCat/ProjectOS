@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Project, Milestone, Label } from "$lib/types";
-  import { loadIssues, getIssues, isLoading, getShowClosed } from "$lib/stores/issues.svelte";
-  import { listMilestones, createIssue, getIssueLabels, syncGithubIssues } from "$lib/commands";
+  import { loadIssues, getIssues, isLoading } from "$lib/stores/issues.svelte";
+  import { listMilestones, createIssue, getIssueLabels, syncGithubIssues, listLabels } from "$lib/commands";
   import { projectColor, getProjects } from "$lib/stores/projects.svelte";
   import IssueList from "./IssueList.svelte";
   import MilestoneBar from "./MilestoneBar.svelte";
@@ -15,12 +15,19 @@
 
   let milestones = $state<Milestone[]>([]);
   let labelMap = $state<Record<string, Label[]>>({});
+  let projectLabels = $state<Label[]>([]);
   let showClosed = $state(false);
   let creatingIssue = $state(false);
   let newIssueTitle = $state("");
   let newIssueBody = $state("");
   let newIssueStatus = $state("ready");
   let newIssueInputEl = $state<HTMLInputElement | null>(null);
+  let filterInputEl = $state<HTMLInputElement | null>(null);
+
+  // Filter state
+  let filterText = $state("");
+  let selectedStatuses = $state(new Set<string>());
+  let selectedLabelIds = $state(new Set<string>());
 
   $effect(() => {
     if (creatingIssue && newIssueInputEl) {
@@ -40,22 +47,37 @@
   const openCount = $derived(issues.filter((i) => i.state === "open").length);
   const closedCount = $derived(issues.filter((i) => i.state === "closed").length);
 
+  const hasActiveFilters = $derived(
+    filterText.length > 0 || selectedStatuses.size > 0 || selectedLabelIds.size > 0
+  );
+
+  const filteredIssues = $derived.by(() => {
+    const q = filterText.trim().toLowerCase();
+    return issues.filter((issue) => {
+      if (q) {
+        const hay = `${issue.title} ${issue.body ?? ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (selectedStatuses.size > 0) {
+        const effective = issue.status ?? "ready";
+        if (!selectedStatuses.has(effective)) return false;
+      }
+      if (selectedLabelIds.size > 0) {
+        const labels = labelMap[issue.id] ?? [];
+        const hit = labels.some((l) => selectedLabelIds.has(l.id));
+        if (!hit) return false;
+      }
+      return true;
+    });
+  });
+
+  const filteredCount = $derived(filteredIssues.length);
+
   async function refresh() {
     await loadIssues(project.id, showClosed);
-    // load labels for each issue
-    const map: Record<string, Label[]> = {};
-    for (const issue of issues) {
-      try {
-        map[issue.id] = await getIssueLabels(issue.id);
-      } catch {
-        map[issue.id] = [];
-      }
-    }
-    labelMap = map;
   }
 
   $effect(() => {
-    // re-run when project or showClosed changes
     const pid = project.id;
     const sc = showClosed;
     loadIssues(pid, sc).then(() => {
@@ -70,9 +92,13 @@
       ).then(() => { labelMap = map; });
     });
 
-    listMilestones(project.id)
+    listMilestones(pid)
       .then((ms) => { milestones = ms; })
       .catch(() => {});
+
+    listLabels(pid)
+      .then((ls) => { projectLabels = ls; })
+      .catch(() => { projectLabels = []; });
   });
 
   async function handleCreateIssue() {
@@ -102,8 +128,35 @@
     if (e.key === "Enter" && e.metaKey) handleCreateIssue();
   }
 
-  function toggleClosed() {
-    showClosed = !showClosed;
+  function toggleStatus(status: string) {
+    const next = new Set(selectedStatuses);
+    if (next.has(status)) next.delete(status);
+    else next.add(status);
+    selectedStatuses = next;
+  }
+
+  function toggleLabel(id: string) {
+    const next = new Set(selectedLabelIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selectedLabelIds = next;
+  }
+
+  function clearFilters() {
+    filterText = "";
+    selectedStatuses = new Set();
+    selectedLabelIds = new Set();
+  }
+
+  function handleWindowKey(e: KeyboardEvent) {
+    const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+    const isInput = tag === "input" || tag === "textarea" || (e.target as HTMLElement)?.isContentEditable;
+    if (isInput) return;
+    if (e.key === "/") {
+      e.preventDefault();
+      filterInputEl?.focus();
+      filterInputEl?.select();
+    }
   }
 
   let syncingGithub = $state(false);
@@ -122,7 +175,16 @@
       syncingGithub = false;
     }
   }
+
+  const statusChips: { key: string; label: string }[] = [
+    { key: "next", label: "Next" },
+    { key: "ready", label: "Ready" },
+    { key: "blocked", label: "Blocked" },
+    { key: "idea", label: "Ideas" },
+  ];
 </script>
+
+<svelte:window onkeydown={handleWindowKey} />
 
 <div class="project-view">
   <div class="project-header" style:--accent={accent}>
@@ -151,6 +213,56 @@
     </div>
   </div>
 
+  {#if !showClosed}
+    <div class="filter-bar">
+      <div class="filter-search">
+        <span class="filter-icon" aria-hidden="true">⌕</span>
+        <input
+          bind:this={filterInputEl}
+          class="filter-input"
+          type="text"
+          placeholder="Filter issues…  (press / )"
+          bind:value={filterText}
+          onkeydown={(e) => { if (e.key === "Escape") { filterText = ""; filterInputEl?.blur(); } }}
+        />
+        {#if filterText}
+          <button class="filter-clear-x" onclick={() => { filterText = ""; }}>×</button>
+        {/if}
+      </div>
+      <div class="filter-chips">
+        {#each statusChips as s (s.key)}
+          <button
+            class="chip chip-status"
+            class:active={selectedStatuses.has(s.key)}
+            data-status={s.key}
+            onclick={() => toggleStatus(s.key)}
+          >
+            <span class="chip-dot" data-status={s.key}></span>
+            {s.label}
+          </button>
+        {/each}
+        {#if projectLabels.length > 0}
+          <span class="chip-divider"></span>
+          {#each projectLabels as lbl (lbl.id)}
+            <button
+              class="chip chip-label"
+              class:active={selectedLabelIds.has(lbl.id)}
+              style:--label-color={lbl.color}
+              onclick={() => toggleLabel(lbl.id)}
+            >
+              <span class="label-swatch" style:background={lbl.color}></span>
+              {lbl.name}
+            </button>
+          {/each}
+        {/if}
+        {#if hasActiveFilters}
+          <button class="chip chip-clear" onclick={clearFilters}>Clear</button>
+          <span class="filter-result-count">{filteredCount} / {openCount}</span>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   {#if activeMilestone}
     <div class="milestone-wrap">
       <MilestoneBar milestone={activeMilestone} />
@@ -173,7 +285,7 @@
       />
       <textarea
         class="new-issue-body-input"
-        placeholder="Description (optional)"
+        placeholder="Description (optional, markdown supported)"
         bind:value={newIssueBody}
         onkeydown={handleNewIssueKeydown}
         rows="4"
@@ -207,7 +319,7 @@
   {#if loading}
     <div class="loading">Loading…</div>
   {:else}
-    <IssueList {issues} {labelMap} {accent} {showClosed} />
+    <IssueList issues={filteredIssues} {labelMap} {accent} {showClosed} />
   {/if}
 </div>
 
@@ -334,6 +446,152 @@
   .github-sync-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    background: rgba(0, 0, 0, 0.12);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .filter-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
+    padding: 4px 8px;
+    min-width: 220px;
+    flex: 0 1 280px;
+  }
+
+  .filter-search:focus-within {
+    border-color: rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .filter-icon {
+    font-size: 13px;
+    color: #5a5a4a;
+  }
+
+  .filter-input {
+    flex: 1;
+    background: none;
+    border: none;
+    color: #d8d8c8;
+    font-size: 12.5px;
+    font-family: inherit;
+    outline: none;
+    padding: 2px 0;
+    min-width: 0;
+  }
+
+  .filter-input::placeholder {
+    color: #4a4a3a;
+  }
+
+  .filter-clear-x {
+    background: none;
+    border: none;
+    color: #6a6a5a;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+  .filter-clear-x:hover { color: #a0a090; }
+
+  .filter-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #7a7a6a;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.1s;
+  }
+
+  .chip:hover {
+    color: #c8c8b0;
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .chip.active {
+    color: #0a0a0a;
+    background: #c8c8b0;
+    border-color: #c8c8b0;
+  }
+
+  .chip-status.active[data-status="next"] {
+    background: #b8e060;
+    border-color: #b8e060;
+  }
+  .chip-status.active[data-status="blocked"] {
+    background: #e8a040;
+    border-color: #e8a040;
+  }
+  .chip-status.active[data-status="idea"] {
+    background: #9a8ad8;
+    border-color: #9a8ad8;
+  }
+
+  .chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #5a5a4a;
+    flex-shrink: 0;
+  }
+  .chip-dot[data-status="next"] { background: #b8e060; }
+  .chip-dot[data-status="ready"] { background: #8a8a7a; }
+  .chip-dot[data-status="blocked"] { background: #e8a040; }
+  .chip-dot[data-status="idea"] { background: #9a8ad8; }
+  .chip.active .chip-dot { background: rgba(0, 0, 0, 0.35); }
+
+  .chip-divider {
+    width: 1px;
+    height: 16px;
+    background: rgba(255, 255, 255, 0.08);
+    margin: 0 4px;
+  }
+
+  .label-swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .chip-clear {
+    color: #6a6a5a;
+    border-style: dashed;
+  }
+
+  .filter-result-count {
+    font-size: 11px;
+    color: #5a5a4a;
+    margin-left: 4px;
   }
 
   .milestone-wrap {

@@ -84,6 +84,7 @@ pub fn run() {
             commands::search::search_issues,
             // GitHub
             commands::github::sync_github_issues,
+            commands::github::publish_issue_to_github,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -176,123 +176,154 @@ pub fn get_issue(state: State<AppState>, id: String) -> Result<Issue, String> {
 
 #[tauri::command]
 pub fn update_issue(app: tauri::AppHandle, state: State<AppState>, input: UpdateIssue) -> Result<Issue, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    let now = now_ms();
+    let issue_id = input.id.clone();
+    let (issue, push_snap) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let now = now_ms();
 
-    let existing = db.query_row(
-        &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
-        [&input.id],
-        row_to_issue,
-    ).map_err(|e| e.to_string())?;
+        let existing = db.query_row(
+            &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
+            [&input.id],
+            row_to_issue,
+        ).map_err(|e| e.to_string())?;
 
-    let title = input.title.unwrap_or(existing.title);
-    let body = input.body.or(existing.body);
-    let status = input.status.or(existing.status);
-    let context = input.context.or(existing.context);
-    let machine_id = input.machine_id.or(existing.machine_id);
-    let milestone_id = input.milestone_id.or(existing.milestone_id);
+        let title = input.title.unwrap_or(existing.title);
+        let body = input.body.or(existing.body);
+        let status = input.status.or(existing.status);
+        let context = input.context.or(existing.context);
+        let machine_id = input.machine_id.or(existing.machine_id);
+        let milestone_id = input.milestone_id.or(existing.milestone_id);
 
-    // Enforce only one 'next' per project
-    if status.as_deref() == Some("next") {
-        if let Some(ref pid) = existing.project_id {
-            db.execute(
-                "UPDATE issues SET status = 'ready', updated_at = ?1 WHERE project_id = ?2 AND status = 'next' AND id != ?3",
-                rusqlite::params![now, pid, input.id],
-            ).map_err(|e| e.to_string())?;
+        // Enforce only one 'next' per project
+        if status.as_deref() == Some("next") {
+            if let Some(ref pid) = existing.project_id {
+                db.execute(
+                    "UPDATE issues SET status = 'ready', updated_at = ?1 WHERE project_id = ?2 AND status = 'next' AND id != ?3",
+                    rusqlite::params![now, pid, input.id],
+                ).map_err(|e| e.to_string())?;
+            }
         }
-    }
 
-    db.execute(
-        "UPDATE issues SET title = ?1, body = ?2, status = ?3, context = ?4, machine_id = ?5, milestone_id = ?6, updated_at = ?7 WHERE id = ?8",
-        rusqlite::params![title, body, status, context, machine_id, milestone_id, now, input.id],
-    ).map_err(|e| e.to_string())?;
+        db.execute(
+            "UPDATE issues SET title = ?1, body = ?2, status = ?3, context = ?4, machine_id = ?5, milestone_id = ?6, updated_at = ?7 WHERE id = ?8",
+            rusqlite::params![title, body, status, context, machine_id, milestone_id, now, input.id],
+        ).map_err(|e| e.to_string())?;
 
-    let issue = db.query_row(
-        &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
-        [&input.id],
-        row_to_issue,
-    ).map_err(|e| e.to_string())?;
+        let issue = db.query_row(
+            &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
+            [&input.id],
+            row_to_issue,
+        ).map_err(|e| e.to_string())?;
+
+        let push_snap = crate::commands::github::snapshot_for_push(&db, &input.id);
+        (issue, push_snap)
+    };
 
     app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
+
+    if let Some(snap) = push_snap {
+        crate::commands::github::spawn_push_issue_update(app.clone(), issue_id, snap);
+    }
+
     Ok(issue)
 }
 
 #[tauri::command]
 pub fn close_issue(app: tauri::AppHandle, state: State<AppState>, id: String) -> Result<Issue, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    let now = now_ms();
+    let (issue, push_snap) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let now = now_ms();
 
-    db.execute(
-        "UPDATE issues SET state = 'closed', closed_at = ?1, updated_at = ?2 WHERE id = ?3",
-        rusqlite::params![now, now, id],
-    ).map_err(|e| e.to_string())?;
-
-    // Re-evaluate blocked issues: if this was a blocker, check if blocked issues now have no open blockers
-    let blocked_ids: Vec<String> = {
-        let mut stmt = db.prepare(
-            "SELECT blocked_id FROM issue_deps WHERE blocker_id = ?1"
+        db.execute(
+            "UPDATE issues SET state = 'closed', closed_at = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![now, now, id],
         ).map_err(|e| e.to_string())?;
-        let ids: Vec<String> = stmt.query_map([&id], |row| row.get(0))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-        ids
+
+        // Re-evaluate blocked issues: if this was a blocker, check if blocked issues now have no open blockers
+        let blocked_ids: Vec<String> = {
+            let mut stmt = db.prepare(
+                "SELECT blocked_id FROM issue_deps WHERE blocker_id = ?1"
+            ).map_err(|e| e.to_string())?;
+            let ids: Vec<String> = stmt.query_map([&id], |row| row.get(0))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            ids
+        };
+
+        for blocked_id in &blocked_ids {
+            let open_blocker_count: i64 = db.query_row(
+                "SELECT COUNT(*) FROM issue_deps d JOIN issues i ON i.id = d.blocker_id WHERE d.blocked_id = ?1 AND i.state = 'open'",
+                [blocked_id],
+                |row| row.get(0),
+            ).map_err(|e| e.to_string())?;
+
+            if open_blocker_count == 0 {
+                db.execute(
+                    "UPDATE issues SET status = 'ready', updated_at = ?1 WHERE id = ?2 AND status = 'blocked'",
+                    rusqlite::params![now, blocked_id],
+                ).map_err(|e| e.to_string())?;
+            }
+        }
+
+        // Log activity
+        db.execute(
+            "INSERT INTO activity_log (issue_id, project_id, action, detail, created_at) SELECT ?1, project_id, 'closed', NULL, ?2 FROM issues WHERE id = ?1",
+            rusqlite::params![id, now],
+        ).map_err(|e| e.to_string())?;
+
+        let issue = db.query_row(
+            &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
+            [&id],
+            row_to_issue,
+        ).map_err(|e| e.to_string())?;
+
+        let push_snap = crate::commands::github::snapshot_for_push(&db, &id);
+        (issue, push_snap)
     };
 
-    for blocked_id in &blocked_ids {
-        let open_blocker_count: i64 = db.query_row(
-            "SELECT COUNT(*) FROM issue_deps d JOIN issues i ON i.id = d.blocker_id WHERE d.blocked_id = ?1 AND i.state = 'open'",
-            [blocked_id],
-            |row| row.get(0),
-        ).map_err(|e| e.to_string())?;
+    app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
 
-        if open_blocker_count == 0 {
-            db.execute(
-                "UPDATE issues SET status = 'ready', updated_at = ?1 WHERE id = ?2 AND status = 'blocked'",
-                rusqlite::params![now, blocked_id],
-            ).map_err(|e| e.to_string())?;
-        }
+    if let Some(snap) = push_snap {
+        crate::commands::github::spawn_push_issue_update(app.clone(), id, snap);
     }
 
-    // Log activity
-    db.execute(
-        "INSERT INTO activity_log (issue_id, project_id, action, detail, created_at) SELECT ?1, project_id, 'closed', NULL, ?2 FROM issues WHERE id = ?1",
-        rusqlite::params![id, now],
-    ).map_err(|e| e.to_string())?;
-
-    let issue = db.query_row(
-        &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
-        [&id],
-        row_to_issue,
-    ).map_err(|e| e.to_string())?;
-
-    app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
     Ok(issue)
 }
 
 #[tauri::command]
 pub fn reopen_issue(app: tauri::AppHandle, state: State<AppState>, id: String) -> Result<Issue, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    let now = now_ms();
+    let (issue, push_snap) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let now = now_ms();
 
-    db.execute(
-        "UPDATE issues SET state = 'open', status = 'ready', closed_at = NULL, updated_at = ?1 WHERE id = ?2",
-        rusqlite::params![now, id],
-    ).map_err(|e| e.to_string())?;
+        db.execute(
+            "UPDATE issues SET state = 'open', status = 'ready', closed_at = NULL, updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, id],
+        ).map_err(|e| e.to_string())?;
 
-    // Log activity
-    db.execute(
-        "INSERT INTO activity_log (issue_id, project_id, action, detail, created_at) SELECT ?1, project_id, 'reopened', NULL, ?2 FROM issues WHERE id = ?1",
-        rusqlite::params![id, now],
-    ).map_err(|e| e.to_string())?;
+        // Log activity
+        db.execute(
+            "INSERT INTO activity_log (issue_id, project_id, action, detail, created_at) SELECT ?1, project_id, 'reopened', NULL, ?2 FROM issues WHERE id = ?1",
+            rusqlite::params![id, now],
+        ).map_err(|e| e.to_string())?;
 
-    let issue = db.query_row(
-        &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
-        [&id],
-        row_to_issue,
-    ).map_err(|e| e.to_string())?;
+        let issue = db.query_row(
+            &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
+            [&id],
+            row_to_issue,
+        ).map_err(|e| e.to_string())?;
+
+        let push_snap = crate::commands::github::snapshot_for_push(&db, &id);
+        (issue, push_snap)
+    };
 
     app.emit("issues-changed", serde_json::json!({"project_id": issue.project_id})).unwrap();
+
+    if let Some(snap) = push_snap {
+        crate::commands::github::spawn_push_issue_update(app.clone(), id, snap);
+    }
+
     Ok(issue)
 }
 

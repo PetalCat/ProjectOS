@@ -1,31 +1,194 @@
+use crate::commands::issues::{row_to_issue, ISSUE_COLUMNS};
+use crate::models::issue::Issue;
 use crate::state::AppState;
-use tauri::{Emitter, State};
-use uuid::Uuid;
+use rusqlite::Connection;
 use std::process::Command;
+use tauri::{AppHandle, Emitter, State};
+use uuid::Uuid;
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
 }
 
+// ── link helpers ──────────────────────────────────────────────────────────────
+
+fn parse_external_id(ext_id: &str) -> Option<(String, i64)> {
+    // external_id format is "owner/repo#N"
+    let hash = ext_id.rfind('#')?;
+    let repo = ext_id[..hash].to_string();
+    let number: i64 = ext_id[hash + 1..].parse().ok()?;
+    Some((repo, number))
+}
+
+fn github_link(db: &Connection, issue_id: &str) -> Option<(String, i64)> {
+    let row: Result<(Option<String>, Option<String>), _> = db.query_row(
+        "SELECT external_source, external_id FROM issues WHERE id = ?1",
+        [issue_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+    let (source, ext_id) = row.ok()?;
+    if source.as_deref() != Some("github") {
+        return None;
+    }
+    ext_id.as_deref().and_then(parse_external_id)
+}
+
+pub struct PushSnapshot {
+    repo: String,
+    number: i64,
+    title: String,
+    body: String,
+    state: String,
+}
+
+// Extract push info while the DB lock is held. Call from within a command,
+// then drop the lock before invoking `push_issue_update_async` to avoid
+// blocking the DB while `gh` runs.
+pub fn snapshot_for_push(db: &Connection, issue_id: &str) -> Option<PushSnapshot> {
+    let (repo, number) = github_link(db, issue_id)?;
+    let row: Result<(String, Option<String>, String), _> = db.query_row(
+        "SELECT title, body, state FROM issues WHERE id = ?1",
+        [issue_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    );
+    let (title, body, state) = row.ok()?;
+    Some(PushSnapshot {
+        repo,
+        number,
+        title,
+        body: body.unwrap_or_default(),
+        state,
+    })
+}
+
+fn emit_push_error(app: &AppHandle, issue_id: &str, message: impl Into<String>) {
+    let msg = message.into();
+    eprintln!("[github push] issue={} error={}", issue_id, msg);
+    let _ = app.emit(
+        "github-push-error",
+        serde_json::json!({ "issue_id": issue_id, "message": msg }),
+    );
+}
+
+pub fn push_issue_update_snapshot(app: &AppHandle, issue_id: &str, snap: PushSnapshot) {
+    // Edit title + body
+    let mut edit = Command::new("gh");
+    edit.args([
+        "issue",
+        "edit",
+        &snap.number.to_string(),
+        "--repo",
+        &snap.repo,
+        "--title",
+        &snap.title,
+        "--body",
+        &snap.body,
+    ]);
+    match edit.output() {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => emit_push_error(
+            app,
+            issue_id,
+            format!("gh issue edit: {}", String::from_utf8_lossy(&o.stderr).trim()),
+        ),
+        Err(e) => emit_push_error(app, issue_id, format!("gh issue edit failed: {}", e)),
+    }
+
+    // Sync state (idempotent)
+    let subcmd = if snap.state == "closed" { "close" } else { "reopen" };
+    let state_res = Command::new("gh")
+        .args([
+            "issue",
+            subcmd,
+            &snap.number.to_string(),
+            "--repo",
+            &snap.repo,
+        ])
+        .output();
+    // Non-success on close/reopen usually means "already in that state" — ignore.
+    if let Err(e) = state_res {
+        emit_push_error(app, issue_id, format!("gh issue {}: {}", subcmd, e));
+    }
+}
+
+pub fn spawn_push_issue_update(app: AppHandle, issue_id: String, snap: PushSnapshot) {
+    std::thread::spawn(move || {
+        push_issue_update_snapshot(&app, &issue_id, snap);
+    });
+}
+
+pub fn spawn_push_comment(app: AppHandle, issue_id: String, repo: String, number: i64, body: String) {
+    std::thread::spawn(move || {
+        let res = Command::new("gh")
+            .args([
+                "issue",
+                "comment",
+                &number.to_string(),
+                "--repo",
+                &repo,
+                "--body",
+                &body,
+            ])
+            .output();
+        match res {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => emit_push_error(
+                &app,
+                &issue_id,
+                format!(
+                    "gh issue comment: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ),
+            ),
+            Err(e) => emit_push_error(&app, &issue_id, format!("gh issue comment failed: {}", e)),
+        }
+    });
+}
+
+// ── Tauri commands ────────────────────────────────────────────────────────────
+
 #[tauri::command]
-pub fn sync_github_issues(app: tauri::AppHandle, state: State<AppState>, project_id: String) -> Result<u32, String> {
+pub fn sync_github_issues(
+    app: AppHandle,
+    state: State<AppState>,
+    project_id: String,
+) -> Result<u32, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
 
-    // Get github_repo for this project
-    let github_repo: Option<String> = db.query_row(
-        "SELECT github_repo FROM projects WHERE id = ?1", [&project_id], |row| row.get(0),
-    ).map_err(|e| e.to_string())?;
+    let github_repo: Option<String> = db
+        .query_row(
+            "SELECT github_repo FROM projects WHERE id = ?1",
+            [&project_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
 
     let repo = github_repo.ok_or("Project has no linked GitHub repo")?;
 
-    // Use gh CLI to fetch issues
     let output = Command::new("gh")
-        .args(["issue", "list", "--repo", &repo, "--json", "number,title,body,state,url", "--limit", "100"])
+        .args([
+            "issue",
+            "list",
+            "--repo",
+            &repo,
+            "--state",
+            "all",
+            "--json",
+            "number,title,body,state,url",
+            "--limit",
+            "200",
+        ])
         .output()
         .map_err(|e| format!("Failed to run gh CLI: {}", e))?;
 
     if !output.status.success() {
-        return Err(format!("gh CLI error: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "gh CLI error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
     let issues: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)
@@ -38,29 +201,36 @@ pub fn sync_github_issues(app: tauri::AppHandle, state: State<AppState>, project
         let gh_number = issue["number"].as_i64().unwrap_or(0);
         let title = issue["title"].as_str().unwrap_or("").to_string();
         let body = issue["body"].as_str().map(|s| s.to_string());
-        let state = if issue["state"].as_str() == Some("OPEN") { "open" } else { "closed" };
+        let state = if issue["state"].as_str() == Some("OPEN") {
+            "open"
+        } else {
+            "closed"
+        };
         let url = issue["url"].as_str().unwrap_or("").to_string();
         let external_id = format!("{}#{}", repo, gh_number);
 
-        // Check if already synced
-        let exists: bool = db.query_row(
-            "SELECT COUNT(*) > 0 FROM issues WHERE external_source = 'github' AND external_id = ?1",
-            [&external_id], |row| row.get(0),
-        ).unwrap_or(false);
+        let exists: bool = db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM issues WHERE external_source = 'github' AND external_id = ?1",
+                [&external_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
 
         if exists {
-            // Update existing
             db.execute(
                 "UPDATE issues SET title = ?1, body = ?2, state = ?3, status = CASE WHEN ?3 = 'closed' THEN NULL ELSE status END, updated_at = ?4 WHERE external_source = 'github' AND external_id = ?5",
                 rusqlite::params![title, body, state, now, external_id],
             ).map_err(|e| e.to_string())?;
         } else {
-            // Create new
             let id = Uuid::new_v4().to_string();
-            let sort_order: f64 = db.query_row(
-                "SELECT COALESCE(MAX(sort_order), 0.0) + 1.0 FROM issues WHERE project_id = ?1",
-                [&project_id], |row| row.get(0),
-            ).unwrap_or(1.0);
+            let sort_order: f64 = db
+                .query_row(
+                    "SELECT COALESCE(MAX(sort_order), 0.0) + 1.0 FROM issues WHERE project_id = ?1",
+                    [&project_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(1.0);
 
             let status = if state == "open" { Some("ready") } else { None };
 
@@ -73,6 +243,112 @@ pub fn sync_github_issues(app: tauri::AppHandle, state: State<AppState>, project
         synced += 1;
     }
 
-    let _ = app.emit("issues-changed", serde_json::json!({"project_id": project_id}));
+    let _ = app.emit(
+        "issues-changed",
+        serde_json::json!({ "project_id": project_id }),
+    );
     Ok(synced)
+}
+
+#[tauri::command]
+pub fn publish_issue_to_github(
+    app: AppHandle,
+    state: State<AppState>,
+    issue_id: String,
+) -> Result<Issue, String> {
+    // Fetch issue + project.github_repo inside a scoped lock so we can drop
+    // it before invoking `gh` (which can take multiple seconds).
+    let (title, body, repo, project_id) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let issue: Issue = db
+            .query_row(
+                &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
+                [&issue_id],
+                row_to_issue,
+            )
+            .map_err(|e| e.to_string())?;
+
+        if issue.external_source.as_deref() == Some("github") && issue.external_id.is_some() {
+            return Err("Issue is already linked to GitHub".to_string());
+        }
+
+        let project_id = issue
+            .project_id
+            .as_deref()
+            .ok_or("Issue has no project")?
+            .to_string();
+
+        let repo: Option<String> = db
+            .query_row(
+                "SELECT github_repo FROM projects WHERE id = ?1",
+                [&project_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        let repo = repo.ok_or("Project has no linked GitHub repo")?;
+        (
+            issue.title,
+            issue.body.unwrap_or_default(),
+            repo,
+            project_id,
+        )
+    };
+
+    let output = Command::new("gh")
+        .args([
+            "issue", "create", "--repo", &repo, "--title", &title, "--body", &body,
+        ])
+        .output()
+        .map_err(|e| format!("gh CLI: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "gh CLI: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    // Last line of stdout is the URL like https://github.com/owner/repo/issues/123
+    let url = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("http"))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if url.is_empty() {
+        return Err("gh issue create returned no URL".to_string());
+    }
+
+    let number: i64 = url
+        .rsplit('/')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or("Could not parse issue number from gh output")?;
+
+    let external_id = format!("{}#{}", repo, number);
+    let now = now_ms();
+
+    let updated = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.execute(
+            "UPDATE issues SET external_source = 'github', external_id = ?1, external_url = ?2, updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![external_id, url, now, issue_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        db.query_row(
+            &format!("SELECT {} FROM issues WHERE id = ?1", ISSUE_COLUMNS),
+            [&issue_id],
+            row_to_issue,
+        )
+        .map_err(|e| e.to_string())?
+    };
+
+    let _ = app.emit(
+        "issues-changed",
+        serde_json::json!({ "project_id": project_id }),
+    );
+    Ok(updated)
 }

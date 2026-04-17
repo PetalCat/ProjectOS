@@ -17,3 +17,12 @@ export function onActivity(
 ): Promise<UnlistenFn> {
   return listen("activity", (event) => callback(event.payload as any));
 }
+
+export function onGithubPushError(
+  callback: (payload: { issue_id: string; message: string }) => void
+): Promise<UnlistenFn> {
+  return listen<{ issue_id: string; message: string }>(
+    "github-push-error",
+    (event) => callback(event.payload)
+  );
+}

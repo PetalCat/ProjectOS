@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Comment } from "$lib/types";
   import { createComment, listComments } from "$lib/commands";
+  import Markdown from "./Markdown.svelte";
 
   type Props = {
     issueId: string;
@@ -60,7 +61,7 @@
         <span class="comment-author">comment</span>
         <span class="comment-time">{formatTime(comment.created_at)}</span>
       </div>
-      <div class="comment-body">{comment.body}</div>
+      <div class="comment-body"><Markdown source={comment.body} /></div>
     </div>
   {/each}
 
@@ -130,7 +131,6 @@
     font-size: 13px;
     color: #c0c0b0;
     line-height: 1.55;
-    white-space: pre-wrap;
   }
 
   .comment-input-area {
