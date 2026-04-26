@@ -14,7 +14,12 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
         .unwrap_or(0);
 
     if version < 1 {
-        conn.execute("INSERT INTO schema_version (version) VALUES (1)", [])?;
+        // Fresh DB: schema.rs already creates the latest schema, so stamp
+        // version to the current head and skip the per-version ALTERs (which
+        // would otherwise fail with "duplicate column name" on a fresh DB
+        // because the columns are already in CREATE TABLE).
+        conn.execute("INSERT INTO schema_version (version) VALUES (3)", [])?;
+        return Ok(());
     }
 
     if version < 2 {
