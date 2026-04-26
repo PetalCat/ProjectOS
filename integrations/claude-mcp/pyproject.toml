@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "projectos-mcp"
+version = "0.1.0"
+description = "MCP server exposing the ProjectOS local SQLite issue tracker to Claude."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "ProjectOS contributors" }]
+keywords = ["mcp", "claude", "projectos", "issue-tracker"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "fastmcp>=2.0",
+    "platformdirs>=4.0",
+    "pydantic>=2.0",
+]
+
+[project.scripts]
+projectos-mcp = "projectos_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["projectos_mcp"]
