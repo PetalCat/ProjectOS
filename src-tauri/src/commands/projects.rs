@@ -299,10 +299,12 @@ pub fn scan_all_folders(
         let mut stmt = db
             .prepare("SELECT id, path FROM scan_folders")
             .map_err(|e| e.to_string())?;
-        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .collect()
+            .collect();
+        rows
     };
     let now = now_ms();
     let mut all_created = Vec::new();
