@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets you build a draft release manually for testing without
+  # cutting a real tag.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+            label: "macos-arm64"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+            label: "macos-x64"
+          - platform: ubuntu-22.04
+            args: ""
+            label: "linux-x64"
+          - platform: windows-latest
+            args: ""
+            label: "windows-x64"
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            build-essential
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Wired through to tauri-action; inert until the updater
+          # plugin is added — see RELEASING.md for the post-1.0
+          # auto-update setup.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "ProjectOS ${{ github.ref_name }}"
+          releaseBody: |
+            See CHANGELOG.md for details.
+
+            **Install:**
+            - Windows: download the `.msi` from the `windows-x64` artifact
+            - macOS (Apple Silicon): the `.dmg` from `macos-arm64`
+            - macOS (Intel): the `.dmg` from `macos-x64`
+            - Linux: `.AppImage` or `.deb` from `linux-x64`
+
+            On macOS, first launch may need a right-click → Open to bypass Gatekeeper (the build is unsigned for now).
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
