@@ -11,9 +11,28 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let app_dir = app.path().app_data_dir().expect("failed to get app data dir");
-            std::fs::create_dir_all(&app_dir).expect("failed to create app data dir");
-            let db_path = app_dir.join("projectos.db");
+            // PROJECTOS_DB_PATH env var wins so the desktop app + the MCP
+            // server can be pointed at the same DB on Linux/Windows or for
+            // testing against fixtures.
+            let db_path = match std::env::var("PROJECTOS_DB_PATH") {
+                Ok(custom) if !custom.is_empty() => {
+                    let p = std::path::PathBuf::from(custom);
+                    if let Some(parent) = p.parent() {
+                        std::fs::create_dir_all(parent)
+                            .expect("failed to create custom DB parent dir");
+                    }
+                    p
+                }
+                _ => {
+                    let app_dir = app
+                        .path()
+                        .app_data_dir()
+                        .expect("failed to get app data dir");
+                    std::fs::create_dir_all(&app_dir).expect("failed to create app data dir");
+                    app_dir.join("projectos.db")
+                }
+            };
+            eprintln!("[projectos] db_path={}", db_path.display());
             let conn = db::open_db(&db_path).expect("failed to open database");
             db::migrations::run_migrations(&conn).expect("failed to run migrations");
             app.manage(AppState { db: Mutex::new(conn) });
