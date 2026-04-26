@@ -827,10 +827,10 @@ mod tests {
         let state = test_state();
         let db = state.db.lock().unwrap();
         db.execute("INSERT INTO issues (id, title, state, status, sort_order, locked, pinned, created_at, updated_at) VALUES ('i1', 'T', 'open', 'idea', 1.0, 0, 0, 1000, 1000)", []).unwrap();
-        db.execute("INSERT INTO assignees (id, name) VALUES ('a1', 'parker')", []).unwrap();
+        db.execute("INSERT INTO assignees (id, name) VALUES ('a1', 'alice')", []).unwrap();
         db.execute("INSERT INTO issue_assignees (issue_id, assignee_id) VALUES ('i1', 'a1')", []).unwrap();
 
         let name: String = db.query_row("SELECT a.name FROM assignees a JOIN issue_assignees ia ON a.id = ia.assignee_id WHERE ia.issue_id = 'i1'", [], |r| r.get(0)).unwrap();
-        assert_eq!(name, "parker");
+        assert_eq!(name, "alice");
     }
 }
