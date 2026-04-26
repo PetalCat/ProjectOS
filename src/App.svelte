@@ -8,13 +8,14 @@
   import Settings from "$lib/components/Settings.svelte";
   import SearchModal from "$lib/components/SearchModal.svelte";
   import QuickCapture from "$lib/components/QuickCapture.svelte";
+  import Onboarding from "$lib/components/Onboarding.svelte";
   import { loadProjects, getProjects } from "$lib/stores/projects.svelte";
   import { loadMachines, getMachines } from "$lib/stores/machines.svelte";
   import { currentView, navigate } from "$lib/stores/navigation.svelte";
   import { openSearch, isOpen as isSearchOpen } from "$lib/stores/search.svelte";
   import { onProjectsChanged, onIssuesChanged } from "$lib/events";
   import { moveSelection, getSelectedIssue, getIssues } from "$lib/stores/issues.svelte";
-  import { closeIssue, reopenIssue } from "$lib/commands";
+  import { closeIssue, reopenIssue, listScanFolders } from "$lib/commands";
   import { loadIssues } from "$lib/stores/issues.svelte";
 
   const view = $derived(currentView());
@@ -22,6 +23,20 @@
   const machines = $derived(getMachines());
 
   let captureOpen = $state(false);
+
+  // First-run detection: show onboarding only if BOTH project list and
+  // scan folder list are empty on initial load. Once user completes or
+  // skips, in-memory dismissal keeps it gone for the rest of the session;
+  // a subsequent launch with empty registries will show it again — that's
+  // the intended detection-based behavior (no flag in the DB).
+  let scanFolderCount = $state<number | null>(null);
+  let onboardingDismissed = $state(false);
+  const showOnboarding = $derived(
+    !onboardingDismissed &&
+      scanFolderCount !== null &&
+      scanFolderCount === 0 &&
+      projects.length === 0,
+  );
 
   // Find current project for project view
   const currentProject = $derived(
@@ -37,18 +52,27 @@
       : null
   );
 
-  onMount(async () => {
-    await Promise.all([loadProjects(), loadMachines()]);
+  onMount(() => {
+    let unProjects: (() => void) | null = null;
+    let unIssues: (() => void) | null = null;
 
-    // Listen for Rust events and refresh
-    const unProjects = await onProjectsChanged(() => loadProjects());
-    const unIssues = await onIssuesChanged(() => {
-      // issues store refreshes itself via $effect in ProjectView
-    });
+    (async () => {
+      const [, , folders] = await Promise.all([
+        loadProjects(),
+        loadMachines(),
+        listScanFolders().catch(() => []),
+      ]);
+      scanFolderCount = folders.length;
+
+      unProjects = await onProjectsChanged(() => loadProjects());
+      unIssues = await onIssuesChanged(() => {
+        // issues store refreshes itself via $effect in ProjectView
+      });
+    })();
 
     return () => {
-      unProjects();
-      unIssues();
+      unProjects?.();
+      unIssues?.();
     };
   });
 
@@ -113,6 +137,10 @@
 </script>
 
 <svelte:window onkeydown={handleGlobalKey} />
+
+{#if showOnboarding}
+  <Onboarding onComplete={() => { onboardingDismissed = true; }} />
+{/if}
 
 <div class="app">
   <Sidebar onNewIssue={() => { captureOpen = true; }} />
