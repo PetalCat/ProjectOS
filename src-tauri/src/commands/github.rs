@@ -73,44 +73,80 @@ fn emit_push_error(app: &AppHandle, issue_id: &str, message: impl Into<String>) 
     );
 }
 
+// Format a `Command::new("gh")` spawn error with an actionable hint when
+// the gh binary isn't installed. The user-facing banner needs more than
+// "No such file or directory".
+fn fmt_gh_spawn_err(label: &str, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        format!(
+            "{}: GitHub CLI (`gh`) not found. Install from https://cli.github.com and run `gh auth login`.",
+            label
+        )
+    } else {
+        format!("{}: {}", label, e)
+    }
+}
+
+// Format a non-zero gh exit's stderr with hints for the common failure modes
+// (not authenticated, rate-limited).
+fn fmt_gh_stderr(label: &str, stderr: &[u8]) -> String {
+    let msg = String::from_utf8_lossy(stderr).trim().to_string();
+    let lower = msg.to_lowercase();
+    if lower.contains("authentication required")
+        || lower.contains("not logged into")
+        || lower.contains("gh auth login")
+        || lower.contains("401")
+    {
+        format!(
+            "{}: GitHub authentication required. Run `gh auth login` and try again. ({})",
+            label, msg
+        )
+    } else if lower.contains("rate limit") || lower.contains("api rate") {
+        format!(
+            "{}: GitHub rate limit hit — try again in a few minutes. ({})",
+            label, msg
+        )
+    } else {
+        format!("{}: {}", label, msg)
+    }
+}
+
 pub fn push_issue_update_snapshot(app: &AppHandle, issue_id: &str, snap: PushSnapshot) {
-    // Edit title + body
+    let num = snap.number.to_string();
+
+    // Edit title (and body, only when non-empty — otherwise `--body ""` clears
+    // the existing GitHub description, which is a footgun for first-time syncs).
     let mut edit = Command::new("gh");
     edit.args([
         "issue",
         "edit",
-        &snap.number.to_string(),
+        &num,
         "--repo",
         &snap.repo,
         "--title",
         &snap.title,
-        "--body",
-        &snap.body,
     ]);
+    if !snap.body.is_empty() {
+        edit.args(["--body", &snap.body]);
+    }
     match edit.output() {
         Ok(o) if o.status.success() => {}
-        Ok(o) => emit_push_error(
-            app,
-            issue_id,
-            format!("gh issue edit: {}", String::from_utf8_lossy(&o.stderr).trim()),
-        ),
-        Err(e) => emit_push_error(app, issue_id, format!("gh issue edit failed: {}", e)),
+        Ok(o) => emit_push_error(app, issue_id, fmt_gh_stderr("gh issue edit", &o.stderr)),
+        Err(e) => emit_push_error(app, issue_id, fmt_gh_spawn_err("gh issue edit", &e)),
     }
 
     // Sync state (idempotent)
     let subcmd = if snap.state == "closed" { "close" } else { "reopen" };
     let state_res = Command::new("gh")
-        .args([
-            "issue",
-            subcmd,
-            &snap.number.to_string(),
-            "--repo",
-            &snap.repo,
-        ])
+        .args(["issue", subcmd, &num, "--repo", &snap.repo])
         .output();
     // Non-success on close/reopen usually means "already in that state" — ignore.
     if let Err(e) = state_res {
-        emit_push_error(app, issue_id, format!("gh issue {}: {}", subcmd, e));
+        emit_push_error(
+            app,
+            issue_id,
+            fmt_gh_spawn_err(&format!("gh issue {}", subcmd), &e),
+        );
     }
 }
 
@@ -135,15 +171,8 @@ pub fn spawn_push_comment(app: AppHandle, issue_id: String, repo: String, number
             .output();
         match res {
             Ok(o) if o.status.success() => {}
-            Ok(o) => emit_push_error(
-                &app,
-                &issue_id,
-                format!(
-                    "gh issue comment: {}",
-                    String::from_utf8_lossy(&o.stderr).trim()
-                ),
-            ),
-            Err(e) => emit_push_error(&app, &issue_id, format!("gh issue comment failed: {}", e)),
+            Ok(o) => emit_push_error(&app, &issue_id, fmt_gh_stderr("gh issue comment", &o.stderr)),
+            Err(e) => emit_push_error(&app, &issue_id, fmt_gh_spawn_err("gh issue comment", &e)),
         }
     });
 }
@@ -182,13 +211,10 @@ pub fn sync_github_issues(
             "200",
         ])
         .output()
-        .map_err(|e| format!("Failed to run gh CLI: {}", e))?;
+        .map_err(|e| fmt_gh_spawn_err("gh issue list", &e))?;
 
     if !output.status.success() {
-        return Err(format!(
-            "gh CLI error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        return Err(fmt_gh_stderr("gh issue list", &output.stderr));
     }
 
     let issues: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)
@@ -295,18 +321,17 @@ pub fn publish_issue_to_github(
         )
     };
 
-    let output = Command::new("gh")
-        .args([
-            "issue", "create", "--repo", &repo, "--title", &title, "--body", &body,
-        ])
+    let mut create = Command::new("gh");
+    create.args(["issue", "create", "--repo", &repo, "--title", &title]);
+    if !body.is_empty() {
+        create.args(["--body", &body]);
+    }
+    let output = create
         .output()
-        .map_err(|e| format!("gh CLI: {}", e))?;
+        .map_err(|e| fmt_gh_spawn_err("gh issue create", &e))?;
 
     if !output.status.success() {
-        return Err(format!(
-            "gh CLI: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        return Err(fmt_gh_stderr("gh issue create", &output.stderr));
     }
 
     // Last line of stdout is the URL like https://github.com/owner/repo/issues/123

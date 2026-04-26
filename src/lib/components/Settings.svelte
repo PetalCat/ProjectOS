@@ -3,7 +3,7 @@
   import { loadProjects } from "$lib/stores/projects.svelte";
   import type { Project } from "$lib/types";
 
-  let scanPath = $state("/path/to/dev");
+  let scanPath = $state("");
   let scanning = $state(false);
   let scanResult = $state<Project[] | null>(null);
   let scanError = $state<string | null>(null);
@@ -55,7 +55,7 @@
         class="scan-input"
         type="text"
         bind:value={scanPath}
-        placeholder="/path/to/dev"
+        placeholder="Path to a folder containing your projects"
       />
       <button class="scan-btn" onclick={handleScan} disabled={scanning}>
         {scanning ? "Scanning..." : "Scan"}
