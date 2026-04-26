@@ -51,6 +51,10 @@ def _conn() -> sqlite3.Connection:
         )
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # WAL is the database-level mode set by the desktop app on first open;
+    # asking again is cheap and harmless, and keeps the MCP safe if it's
+    # ever started before the app has run.
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
