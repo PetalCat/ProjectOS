@@ -13,6 +13,20 @@
   const projects = $derived(getProjects());
   const machines = $derived(getMachines());
   const view = $derived(currentView());
+
+  const VISIBLE_LIMIT = 8;
+  let showAll = $state(false);
+
+  // Projects already arrive sorted by updated_at desc. Top N stay visible
+  // until the user opts to expand the list.
+  const visibleProjects = $derived(
+    showAll || projects.length <= VISIBLE_LIMIT
+      ? projects
+      : projects.slice(0, VISIBLE_LIMIT),
+  );
+  const hiddenCount = $derived(
+    Math.max(0, projects.length - VISIBLE_LIMIT),
+  );
 </script>
 
 <aside class="sidebar">
@@ -25,6 +39,7 @@
       <span class="home-icon">⌂</span>
       <span class="home-label">ProjectOS</span>
     </button>
+    <div class="tagline">Issue tracking for agent-driven dev</div>
   </div>
 
   <div class="sidebar-scroll">
@@ -33,7 +48,7 @@
       {#if projects.length === 0}
         <div class="empty-list">No projects yet</div>
       {/if}
-      {#each projects as project, i (project.id)}
+      {#each visibleProjects as project, i (project.id)}
         {@const color = projectColor(i)}
         {@const active = view.kind === "project" && view.projectId === project.id}
         <button
@@ -45,6 +60,15 @@
           <span class="item-name">{project.name}</span>
         </button>
       {/each}
+
+      {#if hiddenCount > 0}
+        <button
+          class="show-toggle"
+          onclick={() => (showAll = !showAll)}
+        >
+          {showAll ? "Show less" : `Show all (${hiddenCount} more)`}
+        </button>
+      {/if}
     </div>
 
     {#if machines.length > 0}
@@ -140,6 +164,14 @@
     letter-spacing: -0.01em;
   }
 
+  .tagline {
+    font-size: 10px;
+    color: #4a4a3a;
+    padding: 4px 10px 0;
+    line-height: 1.35;
+    letter-spacing: 0.01em;
+  }
+
   .sidebar-scroll {
     flex: 1;
     overflow-y: auto;
@@ -210,6 +242,25 @@
   .sidebar-item.active .item-name {
     color: #d8d8c8;
     font-weight: 600;
+  }
+
+  .show-toggle {
+    background: none;
+    border: none;
+    color: #5a5a4a;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 12px;
+    margin-top: 2px;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    border-radius: 6px;
+  }
+
+  .show-toggle:hover {
+    color: #a09870;
+    background: rgba(255, 255, 255, 0.04);
   }
 
   .empty-list {
