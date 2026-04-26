@@ -27,5 +27,17 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
         )?;
     }
 
+    if version < 3 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS scan_folders (
+                id TEXT PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                last_scanned_at INTEGER,
+                created_at INTEGER NOT NULL
+            );
+            UPDATE schema_version SET version = 3;"
+        )?;
+    }
+
     Ok(())
 }

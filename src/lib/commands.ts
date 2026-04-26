@@ -10,6 +10,7 @@ import type {
   Milestone,
   Project,
   ReactionGroup,
+  ScanFolder,
   SearchResults,
 } from "./types";
 
@@ -244,6 +245,23 @@ export const scanDeveloperFolder = (path: string) =>
   invoke<Project[]>("scan_developer_folder", { path });
 
 export const rescanTimestamps = () => invoke<number>("rescan_timestamps");
+
+// ── Scan folders registry ─────────────────────────────────────────────────────
+
+export const listScanFolders = () =>
+  invoke<ScanFolder[]>("list_scan_folders");
+
+export const addScanFolder = (path: string) =>
+  invoke<ScanFolder>("add_scan_folder", { path });
+
+export const removeScanFolder = (id: string) =>
+  invoke<void>("remove_scan_folder", { id });
+
+export const scanFolder = (id: string) =>
+  invoke<Project[]>("scan_folder", { id });
+
+export const scanAllFolders = () =>
+  invoke<Project[]>("scan_all_folders");
 
 export const syncGithubIssues = (project_id: string) =>
   invoke<number>("sync_github_issues", { projectId: project_id });

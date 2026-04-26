@@ -111,6 +111,13 @@ export interface SearchResults {
   machines: Machine[];
 }
 
+export interface ScanFolder {
+  id: string;
+  path: string;
+  last_scanned_at: number | null;
+  created_at: number;
+}
+
 export type View =
   | { kind: "home" }
   | { kind: "project"; projectId: string }

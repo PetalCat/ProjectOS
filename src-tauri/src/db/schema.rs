@@ -133,6 +133,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             labels TEXT NOT NULL DEFAULT '[]'
         );
 
+        CREATE TABLE IF NOT EXISTS scan_folders (
+            id TEXT PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            last_scanned_at INTEGER,
+            created_at INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             issue_id TEXT REFERENCES issues(id) ON DELETE SET NULL,

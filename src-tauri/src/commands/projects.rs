@@ -1,7 +1,16 @@
 use crate::models::project::{CreateProject, Project, UpdateProject};
 use crate::state::AppState;
+use rusqlite::Connection;
 use tauri::{Emitter, State};
 use uuid::Uuid;
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ScanFolder {
+    pub id: String,
+    pub path: String,
+    pub last_scanned_at: Option<i64>,
+    pub created_at: i64,
+}
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -108,28 +117,27 @@ pub fn get_dashboard(state: State<AppState>) -> Result<Dashboard, String> {
     Ok(Dashboard { projects: dashboard_projects, recent_activity })
 }
 
-#[tauri::command]
-pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path: String) -> Result<Vec<Project>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    let now = now_ms();
+// Core scan: walk a single folder, create a project per immediate subdirectory
+// that doesn't already exist by name. Holds an open DB lock — caller must
+// already have it.
+fn scan_one_folder(db: &Connection, path: &str, now: i64) -> Result<Vec<Project>, String> {
     let mut created = Vec::new();
-
-    let entries = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
+    let entries = std::fs::read_dir(path).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        // Skip hidden dirs
         if name.starts_with('.') {
             continue;
         }
-        // Skip if project already exists with this name
-        let exists: bool = db.query_row(
-            "SELECT COUNT(*) > 0 FROM projects WHERE name = ?1",
-            [&name],
-            |row| row.get(0),
-        ).unwrap_or(false);
+        let exists: bool = db
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM projects WHERE name = ?1",
+                [&name],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
         if exists {
             continue;
         }
@@ -137,19 +145,20 @@ pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path
         let id = Uuid::new_v4().to_string();
         let dir_path = entry.path().to_string_lossy().to_string();
 
-        // Use folder's actual modification time for updated_at
-        let modified = entry.metadata()
+        let modified = entry
+            .metadata()
             .and_then(|m| m.modified())
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as i64)
             .unwrap_or(now);
 
-        // Detect github_repo from .git/config
         let github_repo: Option<String> = {
             let git_config = std::path::Path::new(&dir_path).join(".git/config");
             if git_config.exists() {
-                std::fs::read_to_string(&git_config).ok().and_then(|c| parse_github_repo(&c))
+                std::fs::read_to_string(&git_config)
+                    .ok()
+                    .and_then(|c| parse_github_repo(&c))
             } else {
                 None
             }
@@ -158,12 +167,14 @@ pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path
         db.execute(
             "INSERT INTO projects (id, name, description, notes, github_repo, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)",
             rusqlite::params![id, name, dir_path, github_repo, modified, modified],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         db.execute(
             "INSERT INTO activity_log (issue_id, project_id, action, detail, created_at) VALUES (NULL, ?1, 'created', ?2, ?3)",
             rusqlite::params![id, serde_json::json!({"title": name, "source": "scan"}).to_string(), now],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         created.push(Project {
             id,
@@ -175,9 +186,142 @@ pub fn scan_developer_folder(app: tauri::AppHandle, state: State<AppState>, path
             updated_at: modified,
         });
     }
+    Ok(created)
+}
 
+#[tauri::command]
+pub fn scan_developer_folder(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    path: String,
+) -> Result<Vec<Project>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let created = scan_one_folder(&db, &path, now_ms())?;
     let _ = app.emit("projects-changed", ());
     Ok(created)
+}
+
+// ── Scan folders registry ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn list_scan_folders(state: State<AppState>) -> Result<Vec<ScanFolder>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = db
+        .prepare("SELECT id, path, last_scanned_at, created_at FROM scan_folders ORDER BY created_at ASC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ScanFolder {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                last_scanned_at: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(rows)
+}
+
+#[tauri::command]
+pub fn add_scan_folder(state: State<AppState>, path: String) -> Result<ScanFolder, String> {
+    let trimmed = path.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("Folder path is empty".to_string());
+    }
+    if !std::path::Path::new(&trimmed).is_dir() {
+        return Err(format!("Folder does not exist: {}", trimmed));
+    }
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let id = Uuid::new_v4().to_string();
+    let now = now_ms();
+    db.execute(
+        "INSERT INTO scan_folders (id, path, last_scanned_at, created_at) VALUES (?1, ?2, NULL, ?3)",
+        rusqlite::params![id, trimmed, now],
+    )
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("UNIQUE") {
+            format!("Folder is already in the list: {}", trimmed)
+        } else {
+            msg
+        }
+    })?;
+    Ok(ScanFolder {
+        id,
+        path: trimmed,
+        last_scanned_at: None,
+        created_at: now,
+    })
+}
+
+#[tauri::command]
+pub fn remove_scan_folder(state: State<AppState>, id: String) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM scan_folders WHERE id = ?1", [&id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn scan_folder(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    id: String,
+) -> Result<Vec<Project>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let path: String = db
+        .query_row(
+            "SELECT path FROM scan_folders WHERE id = ?1",
+            [&id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Folder not found: {}", e))?;
+    let now = now_ms();
+    let created = scan_one_folder(&db, &path, now)?;
+    db.execute(
+        "UPDATE scan_folders SET last_scanned_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, id],
+    )
+    .map_err(|e| e.to_string())?;
+    let _ = app.emit("projects-changed", ());
+    Ok(created)
+}
+
+#[tauri::command]
+pub fn scan_all_folders(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<Vec<Project>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let folders: Vec<(String, String)> = {
+        let mut stmt = db
+            .prepare("SELECT id, path FROM scan_folders")
+            .map_err(|e| e.to_string())?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+    let now = now_ms();
+    let mut all_created = Vec::new();
+    for (id, path) in folders {
+        match scan_one_folder(&db, &path, now) {
+            Ok(mut created) => {
+                all_created.append(&mut created);
+                let _ = db.execute(
+                    "UPDATE scan_folders SET last_scanned_at = ?1 WHERE id = ?2",
+                    rusqlite::params![now, id],
+                );
+            }
+            Err(e) => {
+                eprintln!("[scan_all_folders] {} failed: {}", path, e);
+            }
+        }
+    }
+    let _ = app.emit("projects-changed", ());
+    Ok(all_created)
 }
 
 fn parse_github_repo(git_config: &str) -> Option<String> {
