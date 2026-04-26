@@ -99,6 +99,11 @@ pub fn run() {
             // Projects (scan + rescan)
             commands::projects::scan_developer_folder,
             commands::projects::rescan_timestamps,
+            commands::projects::list_scan_folders,
+            commands::projects::add_scan_folder,
+            commands::projects::remove_scan_folder,
+            commands::projects::scan_folder,
+            commands::projects::scan_all_folders,
             // Search
             commands::search::search_issues,
             // GitHub
